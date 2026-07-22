@@ -121,14 +121,7 @@ class GamepadViewModel(application: Application) : AndroidViewModel(application)
 
     private fun updateTargetDeviceName() {
         val name = when (_mode.value) {
-            GamepadService.Companion.Mode.GAMEPAD -> {
-                when (_activeProfileId.value) {
-                    "ps5"   -> "DualSense Wireless Controller"
-                    "xbox"  -> "Xbox Wireless Controller"
-                    "switch" -> "Pro Controller"
-                    else    -> "Wireless Controller"
-                }
-            }
+            GamepadService.Companion.Mode.GAMEPAD -> "Wireless Controller"
             GamepadService.Companion.Mode.KEYBOARD -> "MacGamepad Keyboard"
         }
         Log.i(TAG, "Setting target Bluetooth device name to: $name")
@@ -405,7 +398,7 @@ class GamepadViewModel(application: Application) : AndroidViewModel(application)
         }
         lastState = state
 
-        if (isReleaseTransition || now - lastInputReportTime >= 8L) {
+        if (isReleaseTransition || now - lastInputReportTime >= 4L) {
             lastInputReportTime = now
             _gamepadService.value?.updateInputState(state)
         }

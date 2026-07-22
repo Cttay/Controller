@@ -340,9 +340,26 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun onPermissionsGranted() {
-        Log.i(TAG, "onPermissionsGranted() called, initializing Bluetooth...")
+    /**
+     * Request Bluetooth discoverability so the Mac can find this phone during scanning.
+     * Duration: 300 seconds (5 minutes). Android shows a system dialog to the user.
+     */
+    private val discoverableLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        Log.i(TAG, "Discoverability result code: ${result.resultCode}")
+        // resultCode == RESULT_CANCELED means user denied, > 0 means granted for that many seconds
+        // Initialize BT regardless — if already paired, it'll connect without discoverability
         viewModelRef?.initializeBluetooth()
+    }
+
+    private fun onPermissionsGranted() {
+        Log.i(TAG, "onPermissionsGranted() called, requesting discoverability...")
+        // Request discoverability so the phone appears in the Mac's Bluetooth scan
+        val discoverableIntent = Intent(android.bluetooth.BluetoothAdapter.ACTION_REQUEST_DISCOVERABLE).apply {
+            putExtra(android.bluetooth.BluetoothAdapter.EXTRA_DISCOVERABLE_DURATION, 300)
+        }
+        discoverableLauncher.launch(discoverableIntent)
     }
 
     override fun onDestroy() {

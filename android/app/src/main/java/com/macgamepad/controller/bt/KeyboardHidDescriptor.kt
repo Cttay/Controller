@@ -1,15 +1,11 @@
 package com.macgamepad.controller.bt
 
 /**
- * Unified HID Report Descriptor for a combined Keyboard + Mouse + Gamepad device.
+ * Unified HID Report Descriptor: Keyboard + Mouse + Gamepad.
  *
- * Defines:
- * - Report ID 0x01: Standard Keyboard (modifiers, reserved, 6 keycodes)
- * - Report ID 0x02: Standard Mouse (buttons, relative X/Y movement, scroll wheel)
- * - Report ID 0x03: Standard Gamepad (Left Stick X/Y, Right Stick X/Y, D-pad, 16 buttons, 2 triggers)
- *
- * This allows the phone to pair once and act as all three devices at the same time,
- * avoiding Bluetooth profile registration swaps and random disconnects.
+ * Keyboard is kept first (Report ID 1) because macOS built-in drivers expect
+ * it at ID 1 for native keyboard functionality. Gamepad (Report ID 3) works
+ * through Steam Input or direct raw HID access (e.g. SDL2 emulators).
  */
 object KeyboardHidDescriptor {
 
@@ -19,7 +15,7 @@ object KeyboardHidDescriptor {
 
     val descriptor: ByteArray = byteArrayOf(
         // ============================================================
-        // Keyboard (Report ID 1)
+        // KEYBOARD (Report ID 1)
         // ============================================================
         0x05, 0x01,         // USAGE_PAGE (Generic Desktop)
         0x09, 0x06,         // USAGE (Keyboard)

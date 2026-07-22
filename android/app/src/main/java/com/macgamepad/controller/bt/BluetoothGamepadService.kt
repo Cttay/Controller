@@ -244,8 +244,8 @@ class BluetoothGamepadService(private val context: Context) {
         val hid = hidDevice ?: return false
 
         val reportData = reportPacker.pack(state)
-        val reportId = if (activeMode == GamepadService.Companion.Mode.GAMEPAD) 1 else 3
-        return hid.sendReport(device, reportId, reportData)
+        // Always use Report ID 3 — the gamepad collection inside the unified descriptor
+        return hid.sendReport(device, KeyboardHidDescriptor.GAMEPAD_REPORT_ID.toInt(), reportData)
     }
 
     /**
@@ -294,15 +294,13 @@ class BluetoothGamepadService(private val context: Context) {
             return
         }
 
-        // Determine SDP subclass and descriptor based on mode
-        val (subclass, descriptor) = when (activeMode) {
-            GamepadService.Companion.Mode.GAMEPAD -> {
-                Pair(BluetoothHidDevice.SUBCLASS2_GAMEPAD, GamepadHidDescriptor.descriptor)
-            }
-            GamepadService.Companion.Mode.KEYBOARD -> {
-                Pair(0xC0.toByte(), KeyboardHidDescriptor.descriptor)
-            }
-        }
+        // Always use the unified descriptor (gamepad + keyboard + mouse in a single
+        // SDP record). The Gamepad collection is placed FIRST in the descriptor so
+        // macOS GameController.framework recognizes this as a controller device.
+        // Subclass MUST be SUBCLASS2_GAMEPAD for macOS to set the Bluetooth CoD
+        // to Peripheral > Gamepad — this is what makes it show as a real controller.
+        val subclass: Byte = BluetoothHidDevice.SUBCLASS2_GAMEPAD
+        val descriptor = KeyboardHidDescriptor.descriptor
 
         // SDP settings: what the host sees when discovering this device
         val sdpSettings = BluetoothHidDeviceAppSdpSettings(

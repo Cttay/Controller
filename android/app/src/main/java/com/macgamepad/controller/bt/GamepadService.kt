@@ -114,14 +114,17 @@ class GamepadService : Service(), SensorEventListener {
     }
 
     /**
-     * Set the emulation mode (Gamepad or Keyboard)
+     * Set the emulation mode (Gamepad or Keyboard).
+     * Since we always register the unified descriptor (keyboard + mouse + gamepad),
+     * mode switching only needs to restart the transmission loop — no BT re-registration.
      */
     fun setMode(newMode: Mode) {
         if (_mode.value == newMode) return
         Log.i(TAG, "Switching mode to: $newMode")
-        stopSession()
+        stopTransmissionLoop()
         _mode.value = newMode
-        startSession()
+        btService.setMode(newMode)
+        startTransmissionLoop()
     }
 
     /**
@@ -179,6 +182,17 @@ class GamepadService : Service(), SensorEventListener {
      */
     fun updateInputState(state: InputState) {
         currentInputState = state
+        if (_mode.value == Companion.Mode.GAMEPAD && btService.connectionState.value == BluetoothGamepadService.ConnectionState.CONNECTED) {
+            var finalState = state
+            if (gyroEnabled) {
+                val rsX = (state.rightStickX + (gyroAccumX / 60f)).coerceIn(-1f, 1f)
+                val rsY = (state.rightStickY + (gyroAccumY / 60f)).coerceIn(-1f, 1f)
+                gyroAccumX = 0f
+                gyroAccumY = 0f
+                finalState = state.copy(rightStickX = rsX, rightStickY = rsY)
+            }
+            btService.sendReport(finalState)
+        }
     }
 
     private var lastSentKeys: List<Byte> = emptyList()
@@ -254,30 +268,10 @@ class GamepadService : Service(), SensorEventListener {
 
                     when (_mode.value) {
                         Mode.GAMEPAD -> {
-                            // Scale stick inputs by sensitivity and deadzone
-                            var finalState = state
-                            if (gyroEnabled) {
-                                // Add gyroscope offsets directly to the analog stick values for gyro-aiming
-                                val rsX = (state.rightStickX + (gyroAccumX / 60f)).coerceIn(-1f, 1f)
-                                val rsY = (state.rightStickY + (gyroAccumY / 60f)).coerceIn(-1f, 1f)
-                                gyroAccumX = 0f
-                                gyroAccumY = 0f
-                                finalState = state.copy(rightStickX = rsX, rightStickY = rsY)
-                            }
-
-                            val stateChanged = last == null ||
-                                    finalState.leftStickX != last.leftStickX ||
-                                    finalState.leftStickY != last.leftStickY ||
-                                    finalState.rightStickX != last.rightStickX ||
-                                    finalState.rightStickY != last.rightStickY ||
-                                    finalState.leftTrigger != last.leftTrigger ||
-                                    finalState.rightTrigger != last.rightTrigger ||
-                                    finalState.buttonBitmask() != last.buttonBitmask() ||
-                                    finalState.hatDirection() != last.hatDirection()
-
-                            if (stateChanged || heartbeatCount >= 25) {
-                                btService.sendReport(finalState)
-                                lastSentState = finalState
+                            // Active inputs are sent instantly in updateInputState() for zero latency.
+                            // We only send a heartbeat report here every 25 iterations (~200ms) to maintain the Bluetooth link.
+                            if (heartbeatCount >= 25) {
+                                btService.sendReport(state)
                                 heartbeatCount = 0
                             } else {
                                 heartbeatCount++
