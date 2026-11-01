@@ -30,6 +30,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import android.os.SystemClock
 import com.macgamepad.controller.input.InputState
 import com.macgamepad.controller.ui.components.*
 import com.macgamepad.controller.ui.theme.*
@@ -309,7 +310,7 @@ fun GamepadScreen(
                                                     change.consume()
                                                     val pos = change.position
                                                     if (change.changedToDown()) {
-                                                        t0 = System.currentTimeMillis(); totalMov = 0f; lastPos = pos
+                                                        t0 = SystemClock.uptimeMillis(); totalMov = 0f; lastPos = pos
                                                     } else {
                                                         lastPos?.let { lp ->
                                                             val dx = pos.x - lp.x; val dy = pos.y - lp.y
@@ -319,7 +320,7 @@ fun GamepadScreen(
                                                         lastPos = pos
                                                     }
                                                 } else {
-                                                    if (System.currentTimeMillis() - t0 < 180 && totalMov < 10f) onTouchpadClick()
+                                                    if (SystemClock.uptimeMillis() - t0 < 180 && totalMov < 10f) onTouchpadClick()
                                                     lastPos = null
                                                 }
                                             }
