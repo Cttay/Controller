@@ -338,7 +338,22 @@ fun GamepadScreen(
                                     .clip(CircleShape)
                                     .background(Brush.radialGradient(listOf(Color(0xFF22C55E), Color(0xFF0A4A0A))))
                                     .border(1.dp, Color(0xFF22C55E).copy(alpha = 0.4f), CircleShape)
-                                    .clickable { updateInput { copy(buttonHome = true) } },
+                                    .pointerInput(Unit) {
+                                        awaitPointerEventScope {
+                                            while (true) {
+                                                val event = awaitPointerEvent()
+                                                val change = event.changes.firstOrNull() ?: continue
+                                                if (change.pressed) {
+                                                    change.consume()
+                                                    if (change.changedToDown()) {
+                                                        updateInput { copy(buttonHome = true) }
+                                                    } else {
+                                                        updateInput { copy(buttonHome = false) }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    },
                                 contentAlignment = Alignment.Center
                             ) {
                                 Text("X", color = Color.White, fontWeight = FontWeight.Black, fontSize = 11.sp)
@@ -351,7 +366,22 @@ fun GamepadScreen(
                                     .clip(CircleShape)
                                     .background(Brush.radialGradient(listOf(Color(0xFF1C2338), Color(0xFF0E1020))))
                                     .border(1.dp, skin.accent.copy(alpha = 0.35f), CircleShape)
-                                    .clickable { updateInput { copy(buttonHome = true) } },
+                                    .pointerInput(Unit) {
+                                        awaitPointerEventScope {
+                                            while (true) {
+                                                val event = awaitPointerEvent()
+                                                val change = event.changes.firstOrNull() ?: continue
+                                                if (change.pressed) {
+                                                    change.consume()
+                                                    if (change.changedToDown()) {
+                                                        updateInput { copy(buttonHome = true) }
+                                                    } else {
+                                                        updateInput { copy(buttonHome = false) }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    },
                                 contentAlignment = Alignment.Center
                             ) {
                                 Text("⌂", color = skin.accent, fontWeight = FontWeight.Bold, fontSize = 10.sp)
