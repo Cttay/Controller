@@ -70,6 +70,7 @@ class GamepadService : Service(), SensorEventListener {
     @Volatile
     private var lastSentState: InputState? = null
     private var heartbeatCount = 0
+    private val mouseMoveBuffer = ByteBuffer.allocate(4)
 
     inner class LocalBinder : Binder() {
         fun getService(): GamepadService = this@GamepadService
@@ -279,7 +280,7 @@ class GamepadService : Service(), SensorEventListener {
                         }
                         Mode.KEYBOARD -> {
                             val keys = getKeyboardKeys(state)
-                            val keysChanged = keys != lastSentKeys
+                            val keysChanged = keys != lastSentKeys || keys.size != lastSentKeys.size || keys.zip(lastSentKeys).any { it.first != it.second }
 
                             if (keysChanged || heartbeatCount >= 50) {
                                 sendKeyboardReport(keys, keyboardBuffer)
@@ -368,10 +369,10 @@ class GamepadService : Service(), SensorEventListener {
 
     @SuppressLint("MissingPermission")
     fun sendMouseMovement(dx: Float, dy: Float) {
-        val mouseBuffer = ByteBuffer.allocate(4)
+        mouseMoveBuffer.clear()
         val rx = (dx * sensitivity).toInt().coerceIn(-127, 127).toByte()
         val ry = (dy * sensitivity).toInt().coerceIn(-127, 127).toByte()
-        sendMouseReportDirect(rx, ry, 0x00.toByte(), mouseBuffer)
+        sendMouseReportDirect(rx, ry, 0x00.toByte(), mouseMoveBuffer)
     }
 
     fun triggerMouseClick() {
