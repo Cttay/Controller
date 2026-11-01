@@ -145,9 +145,12 @@ class MainActivity : ComponentActivity() {
 
                 // Immersive landscape vs Portrait control matching
                 LaunchedEffect(currentScreen) {
-                    requestedOrientation = when (currentScreen) {
+                    val targetOrientation = when (currentScreen) {
                         GamepadViewModel.Screen.GAMEPAD -> ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
-                        else -> ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+                        else -> ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+                    }
+                    if (requestedOrientation != targetOrientation) {
+                        requestedOrientation = targetOrientation
                     }
 
                     val insetsController = WindowInsetsControllerCompat(window, window.decorView)
