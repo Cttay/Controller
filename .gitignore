@@ -9,3 +9,8 @@ android/app/build/
 *.apk
 *.aar
 tools/gamepad_tester
+
+# BEGIN oh-my-opencode-slim worktrees
+.slim/worktrees/
+.slim/worktrees.json
+# END oh-my-opencode-slim worktrees
