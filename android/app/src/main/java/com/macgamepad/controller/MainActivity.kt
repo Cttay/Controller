@@ -72,6 +72,10 @@ class MainActivity : ComponentActivity() {
             viewModelRef?.let { vm ->
                 vm.setService(srv)
                 startStateCollection(srv, vm)
+                // Initialize Bluetooth after service is bound and permissions granted
+                if (requiredPermissions.all { ContextCompat.checkSelfPermission(this@MainActivity, it) == PackageManager.PERMISSION_GRANTED }) {
+                    vm.initializeBluetooth()
+                }
             }
         }
 
@@ -117,15 +121,7 @@ class MainActivity : ComponentActivity() {
         WindowCompat.setDecorFitsSystemWindows(window, false)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
-        // Start Foreground Service so it stays alive
-        Intent(this, GamepadService::class.java).also { intent ->
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                startForegroundService(intent)
-            } else {
-                startService(intent)
-            }
-        }
-
+        // Defer service start until permissions granted
         setContent {
             MacGamepadTheme {
                 val vm: GamepadViewModel = viewModel()
@@ -290,7 +286,13 @@ class MainActivity : ComponentActivity() {
 
     override fun onStart() {
         super.onStart()
-        // Bind to service
+        // Bind to service only if permissions already granted
+        if (requiredPermissions.all { ContextCompat.checkSelfPermission(this, it) == PackageManager.PERMISSION_GRANTED }) {
+            bindToService()
+        }
+    }
+
+    private fun bindToService() {
         Intent(this, GamepadService::class.java).also { intent ->
             bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
         }
@@ -352,8 +354,7 @@ class MainActivity : ComponentActivity() {
     ) { result ->
         Log.i(TAG, "Discoverability result code: ${result.resultCode}")
         // resultCode == RESULT_CANCELED means user denied, > 0 means granted for that many seconds
-        // Initialize BT regardless — if already paired, it'll connect without discoverability
-        viewModelRef?.initializeBluetooth()
+        // BT initialization now happens in onServiceConnected after permissions granted
     }
 
     private fun onPermissionsGranted() {
