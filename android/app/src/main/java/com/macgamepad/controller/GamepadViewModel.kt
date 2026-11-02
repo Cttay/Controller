@@ -121,7 +121,7 @@ class GamepadViewModel(application: Application) : AndroidViewModel(application)
 
     private fun updateTargetDeviceName() {
         val name = when (_mode.value) {
-            GamepadService.Companion.Mode.GAMEPAD -> "Wireless Controller"
+            GamepadService.Companion.Mode.GAMEPAD -> "MacGamepad"
             GamepadService.Companion.Mode.KEYBOARD -> "MacGamepad Keyboard"
         }
         Log.i(TAG, "Setting target Bluetooth device name to: $name")
