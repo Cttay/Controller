@@ -344,6 +344,7 @@ class MainActivity : ComponentActivity(), GamepadViewModel.PermissionCallback {
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
         Log.i(TAG, "Bluetooth enable result: ${result.resultCode}")
+        onBluetoothEnableResult(result.resultCode)
     }
 
     // PermissionCallback implementation
@@ -365,6 +366,11 @@ class MainActivity : ComponentActivity(), GamepadViewModel.PermissionCallback {
     override fun requestBluetoothEnable() {
         val enableIntent = Intent(android.bluetooth.BluetoothAdapter.ACTION_REQUEST_ENABLE)
         bluetoothEnableLauncher.launch(enableIntent)
+    }
+
+    // Additional callback for Bluetooth enable result (used by initialization flow)
+    fun onBluetoothEnableResult(resultCode: Int) {
+        viewModelRef?.onBluetoothEnableResult(resultCode)
     }
 
     override fun onDestroy() {

@@ -151,6 +151,18 @@ class GamepadViewModel(application: Application) : AndroidViewModel(application)
         fun requestBluetoothEnable()
     }
 
+    // Tracks initialization sequence state
+    private val _initializationState = MutableStateFlow<InitializationState>(InitializationState.Idle)
+    val initializationState: StateFlow<InitializationState> = _initializationState.asStateFlow()
+
+    sealed interface InitializationState {
+        object Idle : InitializationState
+        data class RequestingPermissions(val missingPermissions: List<String>) : InitializationState
+        object RequestingBluetoothEnable : InitializationState
+        object RequestingDiscoverability : InitializationState
+        data class Error(val message: String) : InitializationState
+    }
+
     private var permissionCallback: PermissionCallback? = null
 
     fun setPermissionCallback(callback: PermissionCallback) {
@@ -528,32 +540,7 @@ class GamepadViewModel(application: Application) : AndroidViewModel(application)
         permissionCallback?.requestBluetoothPermissions(missingPermissions.toTypedArray())
     }
 
-    fun onBluetoothPermissionsResult(results: Map<String, Boolean>) {
-        _isRequestingPermissions.value = false
-        val context = getApplication<Application>() as Context
-        val missingAfterRequest = mutableListOf<String>()
-        var anyRationale = false
-        var anyPermanentDenial = false
-
-        for ((perm, granted) in results) {
-            if (!granted && perm in bluetoothPermissions) {
-                missingAfterRequest.add(perm)
-                val rationale = androidx.core.app.ActivityCompat.shouldShowRequestPermissionRationale(
-                    context as androidx.activity.ComponentActivity, perm)
-                if (rationale) {
-                    anyRationale = true
-                } else if (hasEverRequestedBluetoothPermissions) {
-                    anyPermanentDenial = true
-                }
-            }
-        }
-
-        _permissionState.value = when {
-            missingAfterRequest.isEmpty() -> PermissionStatus.Granted
-            anyPermanentDenial -> PermissionStatus.PermanentlyDenied(missingAfterRequest)
-            else -> PermissionStatus.Denied(anyRationale, missingAfterRequest)
-        }
-    }
+    
 
     fun requestDiscoverability() {
         permissionCallback?.requestDiscoverability()
@@ -584,9 +571,99 @@ class GamepadViewModel(application: Application) : AndroidViewModel(application)
         checkAndUpdatePermissionState(getApplication() as Context)
     }
 
-    // Bluetooth enable prompt
+    // Bluetooth enable prompt (used by initialization flow)
     fun requestBluetoothEnable() {
         permissionCallback?.requestBluetoothEnable()
+    }
+
+    // Integrated initialization flow: permissions → BT enable → discoverable → HID
+    fun startInitialization() {
+        val context = getApplication<Application>() as Context
+        val currentPermissionState = checkBluetoothPermissions(context)
+        
+        when (currentPermissionState) {
+            is PermissionStatus.Unknown, is PermissionStatus.Denied -> {
+                // Need to request permissions first
+                _initializationState.value = InitializationState.RequestingPermissions(
+                    missingPermissions = bluetoothPermissions
+                )
+                requestBluetoothPermissions(bluetoothPermissions)
+            }
+            is PermissionStatus.PermanentlyDenied -> {
+                _initializationState.value = InitializationState.Error(
+                    "Bluetooth permissions are required. Please enable them in Settings."
+                )
+            }
+            is PermissionStatus.Granted -> {
+                // Permissions granted, check Bluetooth state
+                proceedAfterPermissionsGranted()
+            }
+        }
+    }
+
+    private fun proceedAfterPermissionsGranted() {
+        // Check if Bluetooth is enabled
+        val app = getApplication() as android.app.Application
+        val bluetoothManager = app.getSystemService(android.bluetooth.BluetoothManager::class.java) as android.bluetooth.BluetoothManager
+        val adapter = bluetoothManager.adapter
+        
+        if (adapter?.isEnabled == true) {
+            // Bluetooth is on, request discoverability
+            _initializationState.value = InitializationState.RequestingDiscoverability
+            requestDiscoverability()
+        } else {
+            // Need to enable Bluetooth first
+            _initializationState.value = InitializationState.RequestingBluetoothEnable
+            requestBluetoothEnable()
+        }
+    }
+
+    // Called from MainActivity after permission result
+    fun onBluetoothPermissionsResult(results: Map<String, Boolean>) {
+        _isRequestingPermissions.value = false
+        val context = getApplication<Application>() as Context
+        val missingAfterRequest = mutableListOf<String>()
+        var anyRationale = false
+        var anyPermanentDenial = false
+
+        for ((perm, granted) in results) {
+            if (!granted && perm in bluetoothPermissions) {
+                missingAfterRequest.add(perm)
+                val rationale = androidx.core.app.ActivityCompat.shouldShowRequestPermissionRationale(
+                    context as androidx.activity.ComponentActivity, perm)
+                if (rationale) {
+                    anyRationale = true
+                } else if (hasEverRequestedBluetoothPermissions) {
+                    anyPermanentDenial = true
+                }
+            }
+        }
+
+        _permissionState.value = when {
+            missingAfterRequest.isEmpty() -> PermissionStatus.Granted
+            anyPermanentDenial -> PermissionStatus.PermanentlyDenied(missingAfterRequest)
+            else -> PermissionStatus.Denied(anyRationale, missingAfterRequest)
+        }
+
+        // If permissions granted, continue initialization flow
+        if (_permissionState.value is PermissionStatus.Granted) {
+            proceedAfterPermissionsGranted()
+        } else {
+            // Reset initialization state on failure
+            _initializationState.value = InitializationState.Idle
+        }
+    }
+
+    // Called from MainActivity after Bluetooth enable result
+    fun onBluetoothEnableResult(resultCode: Int) {
+        if (resultCode == android.app.Activity.RESULT_OK) {
+            // Bluetooth enabled, now request discoverability
+            _initializationState.value = InitializationState.RequestingDiscoverability
+            requestDiscoverability()
+        } else {
+            // User denied Bluetooth enable
+            _initializationState.value = InitializationState.Error("Bluetooth must be enabled to continue.")
+        }
     }
 
     // ================================================================

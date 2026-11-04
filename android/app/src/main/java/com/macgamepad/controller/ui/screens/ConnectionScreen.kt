@@ -46,6 +46,8 @@ fun ConnectionScreen(
 ) {
     val permissionState by vm.permissionState.collectAsState()
     val isRequestingPermissions by vm.isRequestingPermissions.collectAsState()
+    val initializationState by vm.initializationState.collectAsState()
+
     Box(
         modifier = modifier
             .fillMaxSize()
@@ -77,7 +79,7 @@ fun ConnectionScreen(
                 .padding(vertical = 20.dp)
         ) {
 
-            // ══════════════════════════════════════════════════════════════
+            // ═══════════════════════════════════════════════════════════════
             // LOGO MARK + TITLE
             // ══════════════════════════════════════════════════════════════
             Spacer(Modifier.height(8.dp))
@@ -181,7 +183,7 @@ fun ConnectionScreen(
                     drawCircle(color = col.copy(alpha = 0.7f), radius = 4f, center = pos)
                 }
 
-                // Centre connection dot (pulsing feel via static for now)
+                // Centre connection dot
                 drawCircle(
                     brush = Brush.radialGradient(listOf(AccentBlue.copy(alpha = 0.9f), AccentCyan.copy(alpha = 0.0f))),
                     radius = 5f,
@@ -191,7 +193,7 @@ fun ConnectionScreen(
 
             Spacer(Modifier.height(14.dp))
 
-            // Title with gradient (using drawBehind glow)
+            // Title
             Text(
                 text = "MacGamepad",
                 fontSize = 32.sp,
@@ -216,11 +218,11 @@ fun ConnectionScreen(
                 letterSpacing = 0.3.sp
             )
 
-Spacer(Modifier.height(24.dp))
+            Spacer(Modifier.height(24.dp))
 
-            // ═════════════════════════════════════════════════════════════════════════════
-            // STATE CARD — now driven by permissionState + connectionState
-            // ══════════════════════════════════════════════════════════════════════════════
+            // ══════════════════════════════════════════════════════════════
+            // SINGLE UNIFIED STATE CARD
+            // ══════════════════════════════════════════════════════════════
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -231,282 +233,30 @@ Spacer(Modifier.height(24.dp))
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(18.dp)
             ) {
-                // Show permission flow UI when not fully granted
-                // Extract to local val to enable smart casting (delegated property from collectAsState)
-                val currentPermissionState = permissionState
-                when (currentPermissionState) {
-                    is GamepadViewModel.PermissionStatus.Unknown -> {
-                        // First-time user: show "Initialize Controller" button that triggers rationale
-                        Column(
-                            verticalArrangement = Arrangement.spacedBy(10.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally
-                        ) {
-                            Text(
-                                "Register this phone as a Bluetooth HID controller.\nThen pair from your Mac's Bluetooth settings.",
-                                fontSize = 11.sp,
-                                color = TextSecondary,
-                                textAlign = TextAlign.Center,
-                                lineHeight = 16.sp
-                            )
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(50.dp)
-                                    .clip(RoundedCornerShape(14.dp))
-                                    .background(
-                                        Brush.linearGradient(listOf(AccentBlue, Color(0xFF2563EB)))
-                                    )
-                                    .clickable { vm.requestBluetoothPermissions() },
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Row(
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Icon(Icons.Default.Bluetooth, null, tint = Color.White, modifier = Modifier.size(18.dp))
-                                    Text("Initialize Controller", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = Color.White)
-                                }
-                            }
-                        }
-                    }
+                // Check if we're in the initialization flow
+                val isInitializing = initializationState != GamepadViewModel.InitializationState.Idle
+                val isInitialized = permissionState is GamepadViewModel.PermissionStatus.Granted && initializationState == GamepadViewModel.InitializationState.Idle
 
-                    is GamepadViewModel.PermissionStatus.Denied -> {
-                        // Show rationale screen inline
-                        PermissionRationaleScreen(
-                            missingPermissions = currentPermissionState.missingPermissions,
-                            onContinue = { vm.requestBluetoothPermissions(currentPermissionState.missingPermissions) },
-                            onCancel = { /* stay on screen */ }
-                        )
-                    }
-
-                    is GamepadViewModel.PermissionStatus.PermanentlyDenied -> {
-                        PermissionRecoveryScreen(
-                            missingPermissions = currentPermissionState.missingPermissions,
-                            onOpenSettings = { vm.openAppSettings() },
-                            onRetry = { vm.recheckPermissions() }
-                        )
-                    }
-
-                    is GamepadViewModel.PermissionStatus.Granted -> {
-                        // Permissions granted - show connection state UI
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.spacedBy(18.dp)
-                        ) {
-                            // Status badge
-                            ConnectionStatusBadge(connectionState, connectedDeviceName)
-
-                            // Error box
-                            errorMessage?.let { err ->
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clip(RoundedCornerShape(12.dp))
-                                        .background(AccentRed.copy(alpha = 0.08f))
-                                        .border(1.dp, AccentRed.copy(alpha = 0.25f), RoundedCornerShape(12.dp))
-                                        .padding(12.dp)
-                                ) {
-                                    Row(
-                                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                        verticalAlignment = Alignment.Top
-                                    ) {
-                                        Icon(Icons.Default.ErrorOutline, null, tint = AccentRed, modifier = Modifier.size(14.dp).padding(top = 1.dp))
-                                        Text(err, fontSize = 11.sp, color = AccentRed, lineHeight = 15.sp)
-                                    }
-                                }
-                            }
-
-                            // Connection state UI (only when permissions granted)
-                            when (connectionState) {
-                                BluetoothGamepadService.ConnectionState.DISCONNECTED -> {
-                                    Column(
-                                        verticalArrangement = Arrangement.spacedBy(10.dp),
-                                        horizontalAlignment = Alignment.CenterHorizontally
-                                    ) {
-                                        Text(
-                                            "Bluetooth ready. Tap a paired device to connect,\nor make phone discoverable for first pairing.",
-                                            fontSize = 11.sp,
-                                            color = TextSecondary,
-                                            textAlign = TextAlign.Center,
-                                            lineHeight = 16.sp
-                                        )
-                                        // Show discoverability screen instead of auto-discoverability
-                                        DiscoverabilityScreen(
-                                            onAllow = { vm.requestDiscoverability() },
-                                            onSkip = { vm.onDiscoverabilitySkipped() }
-                                        )
-                                    }
-                                }
-
-                                BluetoothGamepadService.ConnectionState.ERROR -> {
-                                    // Check if error is Bluetooth disabled
-                                    val isBluetoothDisabled = errorMessage?.contains("Bluetooth is not enabled") == true
-                                    if (isBluetoothDisabled) {
-                                        BluetoothEnableScreen(
-                                            onEnable = { vm.requestBluetoothEnable() },
-                                            onCancel = { /* stay on screen */ }
-                                        )
-                                    } else {
-                                        Column(
-                                            verticalArrangement = Arrangement.spacedBy(10.dp),
-                                            horizontalAlignment = Alignment.CenterHorizontally
-                                        ) {
-                                            Text(
-                                                "Bluetooth ready. Tap a paired device to connect,\nor make phone discoverable for first pairing.",
-                                                fontSize = 11.sp,
-                                                color = TextSecondary,
-                                                textAlign = TextAlign.Center,
-                                                lineHeight = 16.sp
-                                            )
-                                            DiscoverabilityScreen(
-                                                onAllow = { vm.requestDiscoverability() },
-                                                onSkip = { vm.onDiscoverabilitySkipped() }
-                                            )
-                                        }
-                                    }
-                                }
-
-                                BluetoothGamepadService.ConnectionState.REGISTERING,
-                                BluetoothGamepadService.ConnectionState.CONNECTING -> {
-                                    Column(
-                                        horizontalAlignment = Alignment.CenterHorizontally,
-                                        verticalArrangement = Arrangement.spacedBy(10.dp)
-                                    ) {
-                                        CircularProgressIndicator(
-                                            color = AccentBlue,
-                                            modifier = Modifier.size(32.dp),
-                                            strokeWidth = 2.5.dp
-                                        )
-                                        Text(
-                                            "Setting up Bluetooth profile...",
-                                            fontSize = 12.sp,
-                                            color = TextSecondary,
-                                            textAlign = TextAlign.Center
-                                        )
-                                    }
-                                }
-
-                                BluetoothGamepadService.ConnectionState.REGISTERED_WAITING -> {
-                                    Column(
-                                        verticalArrangement = Arrangement.spacedBy(14.dp),
-                                        horizontalAlignment = Alignment.CenterHorizontally
-                                    ) {
-                                        // Pulsing beacon
-                                        PulsingBeacon()
-
-                                        Text(
-                                            "Discoverable — waiting for Mac",
-                                            fontSize = 13.sp,
-                                            fontWeight = FontWeight.SemiBold,
-                                            color = TextPrimary
-                                        )
-
-                                        // Pairing guide card
-                                        Column(
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .clip(RoundedCornerShape(12.dp))
-                                                .background(Bg3)
-                                                .border(1.dp, BorderSubtle, RoundedCornerShape(12.dp))
-                                                .padding(14.dp),
-                                            verticalArrangement = Arrangement.spacedBy(10.dp)
-                                        ) {
-                                            Text("Pairing Guide", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = TextSecondary, letterSpacing = 0.5.sp)
-                                            PairingStepRow("1", "Open Bluetooth settings on your Mac")
-                                            PairingStepRow("2", "Remove any old phone connection")
-                                            PairingStepRow("3", "Find your phone name and click Connect")
-                                        }
-
-                                        // Paired hosts quick-connect list
-                                        val macHosts = remember(pairedDevices) {
-                                            pairedDevices.filter { device ->
-                                                try {
-                                                    val name = device.name ?: ""
-                                                    name.contains("mac", ignoreCase = true) ||
-                                                    name.contains("book", ignoreCase = true) ||
-                                                    name.contains("imac", ignoreCase = true) ||
-                                                    name.contains("studio", ignoreCase = true) ||
-                                                    name.contains("mini", ignoreCase = true) ||
-                                                    name.isEmpty()
-                                                } catch (e: SecurityException) { true }
-                                            }
-                                        }
-
-                                        if (macHosts.isNotEmpty()) {
-                                            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                                                Text(
-                                                    "QUICK CONNECT",
-                                                    fontSize = 9.sp,
-                                                    fontWeight = FontWeight.Bold,
-                                                    letterSpacing = 1.sp,
-                                                    color = TextTertiary
-                                                )
-                                                macHosts.forEach { device ->
-                                                    val name = try { device.name ?: "Mac Host" } catch (e: SecurityException) { "Mac Host" }
-                                                    Row(
-                                                        modifier = Modifier
-                                                            .fillMaxWidth()
-                                                            .clip(RoundedCornerShape(10.dp))
-                                                            .background(Bg4)
-                                                            .border(1.dp, BorderSubtle, RoundedCornerShape(10.dp))
-                                                            .clickable { onDeviceConnectClick(device) }
-                                                            .padding(horizontal = 14.dp, vertical = 10.dp),
-                                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                                        verticalAlignment = Alignment.CenterVertically
-                                                    ) {
-                                                        Row(
-                                                            verticalAlignment = Alignment.CenterVertically,
-                                                            horizontalArrangement = Arrangement.spacedBy(10.dp)
-                                                        ) {
-                                                            Icon(Icons.Default.Laptop, null, tint = AccentBlue, modifier = Modifier.size(16.dp))
-                                                            Text(name, color = TextPrimary, fontSize = 13.sp, fontWeight = FontWeight.Medium)
-                                                        }
-                                                        Icon(Icons.Default.ChevronRight, null, tint = TextSecondary, modifier = Modifier.size(15.dp))
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-
-                                BluetoothGamepadService.ConnectionState.CONNECTED -> {
-                                    Column(
-                                        verticalArrangement = Arrangement.spacedBy(10.dp),
-                                        horizontalAlignment = Alignment.CenterHorizontally
-                                    ) {
-                                        // Launch button
-                                        Box(
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .height(52.dp)
-                                                .clip(RoundedCornerShape(14.dp))
-                                                .background(Brush.linearGradient(listOf(StatusConnected, Color(0xFF16A34A))))
-                                                .clickable { onStartGamepad() },
-                                            contentAlignment = Alignment.Center
-                                        ) {
-                                            Row(
-                                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                                verticalAlignment = Alignment.CenterVertically
-                                            ) {
-                                                Icon(Icons.Default.SportsEsports, null, tint = Color.White, modifier = Modifier.size(20.dp))
-                                                Text("Launch Controller", fontWeight = FontWeight.ExtraBold, fontSize = 15.sp, color = Color.White)
-                                            }
-                                        }
-
-                                        // Disconnect link
-                                        Text(
-                                            "Disconnect",
-                                            fontSize = 12.sp,
-                                            color = TextTertiary,
-                                            modifier = Modifier
-                                                .clickable { onDisconnectClick() }
-                                                .padding(8.dp)
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    }
+                if (!isInitialized) {
+                    // Show initialization flow
+                    InitializationScreen(
+                        state = initializationState,
+                        onStart = { vm.startInitialization() },
+                        onOpenSettings = { vm.openAppSettings() },
+                        onRetry = { vm.startInitialization() }
+                    )
+                } else {
+                    // Permissions granted and initialization complete - show connection state UI
+                    ConnectionStateContent(
+                        connectionState = connectionState,
+                        connectedDeviceName = connectedDeviceName,
+                        errorMessage = errorMessage,
+                        pairedDevices = pairedDevices,
+                        onDeviceConnectClick = onDeviceConnectClick,
+                        onDisconnectClick = onDisconnectClick,
+                        onStartGamepad = onStartGamepad,
+                        vm = vm
+                    )
                 }
             }
 
@@ -523,9 +273,445 @@ Spacer(Modifier.height(24.dp))
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// ════════════════════════════════════════════════════════════════════════════
+// PERMISSION FLOW SCREENS
+// ═══════════════════════════════════════════════════════════════════════════
+
+@Composable
+private fun InitializationScreen(
+    state: GamepadViewModel.InitializationState,
+    onStart: () -> Unit,
+    onOpenSettings: () -> Unit,
+    onRetry: () -> Unit
+) {
+    when (state) {
+        is GamepadViewModel.InitializationState.Idle -> {
+            // Initial state - show start button
+            PermissionIntroScreen(onInitialize = onStart)
+        }
+        is GamepadViewModel.InitializationState.RequestingPermissions -> {
+            // Show progress while requesting permissions
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                CircularProgressIndicator(
+                    color = AccentBlue,
+                    modifier = Modifier.size(36.dp),
+                    strokeWidth = 3.dp
+                )
+                Text(
+                    "Requesting Bluetooth permissions…",
+                    fontSize = 14.sp,
+                    color = TextSecondary,
+                    textAlign = TextAlign.Center
+                )
+            }
+        }
+        is GamepadViewModel.InitializationState.RequestingBluetoothEnable -> {
+            // Show progress while enabling Bluetooth
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                CircularProgressIndicator(
+                    color = AccentBlue,
+                    modifier = Modifier.size(36.dp),
+                    strokeWidth = 3.dp
+                )
+                Text(
+                    "Enabling Bluetooth…",
+                    fontSize = 14.sp,
+                    color = TextSecondary,
+                    textAlign = TextAlign.Center
+                )
+            }
+        }
+        is GamepadViewModel.InitializationState.RequestingDiscoverability -> {
+            // Show progress while making discoverable
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                CircularProgressIndicator(
+                    color = AccentBlue,
+                    modifier = Modifier.size(36.dp),
+                    strokeWidth = 3.dp
+                )
+                Text(
+                    "Making phone discoverable…",
+                    fontSize = 14.sp,
+                    color = TextSecondary,
+                    textAlign = TextAlign.Center
+                )
+            }
+        }
+        is GamepadViewModel.InitializationState.Error -> {
+            // Show error with retry option
+            Column(
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text(
+                    state.message,
+                    fontSize = 13.sp,
+                    color = AccentRed,
+                    textAlign = TextAlign.Center,
+                    lineHeight = 18.sp
+                )
+                if (state.message.contains("permission", ignoreCase = true)) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(50.dp)
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(Brush.linearGradient(listOf(AccentBlue, Color(0xFF2563EB))))
+                            .clickable { onOpenSettings() },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(Icons.Default.Settings, null, tint = Color.White, modifier = Modifier.size(18.dp))
+                            Text("Open Settings", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = Color.White)
+                        }
+                    }
+                }
+                TextButton(onClick = onRetry) {
+                    Text("Try Again", fontWeight = FontWeight.Medium, fontSize = 14.sp, color = AccentBlue)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PermissionIntroScreen(onInitialize: () -> Unit) {
+    Column(
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Text(
+            "Turn your phone into a gamepad for your Mac.\nWe'll set up Bluetooth so your Mac can find it.",
+            fontSize = 13.sp,
+            color = TextSecondary,
+            textAlign = TextAlign.Center,
+            lineHeight = 18.sp
+        )
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(52.dp)
+                .clip(RoundedCornerShape(14.dp))
+                .background(
+                    Brush.linearGradient(listOf(AccentBlue, Color(0xFF2563EB)))
+                )
+                .clickable { onInitialize() },
+            contentAlignment = Alignment.Center
+        ) {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(Icons.Default.Bluetooth, null, tint = Color.White, modifier = Modifier.size(18.dp))
+                Text("Initialize Controller", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = Color.White)
+            }
+        }
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CONNECTION STATE CONTENT (single unified card)
+// ═══════════════════════════════════════════════════════════════════════════
+
+@Composable
+private fun ConnectionStateContent(
+    connectionState: BluetoothGamepadService.ConnectionState,
+    connectedDeviceName: String?,
+    errorMessage: String?,
+    pairedDevices: List<BluetoothDevice>,
+    onDeviceConnectClick: (BluetoothDevice) -> Unit,
+    onDisconnectClick: () -> Unit,
+    onStartGamepad: () -> Unit,
+    vm: GamepadViewModel
+) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        // Error message (inline, dismissible feel)
+        errorMessage?.let { err ->
+            // Don't show "Bluetooth is not enabled" error since we handle that in init flow
+            if (!err.contains("Bluetooth is not enabled", ignoreCase = true)) {
+                ErrorInline(err)
+            }
+        }
+
+        when (connectionState) {
+            BluetoothGamepadService.ConnectionState.DISCONNECTED -> {
+                DisconnectedState(onRequestDiscoverable = { vm.requestDiscoverability() })
+            }
+
+            BluetoothGamepadService.ConnectionState.ERROR -> {
+                // All Bluetooth errors should be handled in init flow now
+                DisconnectedState(onRequestDiscoverable = { vm.requestDiscoverability() })
+            }
+
+            BluetoothGamepadService.ConnectionState.REGISTERING,
+            BluetoothGamepadService.ConnectionState.CONNECTING -> {
+                ConnectingState()
+            }
+
+            BluetoothGamepadService.ConnectionState.REGISTERED_WAITING -> {
+                DiscoverableState(
+                    pairedDevices = pairedDevices,
+                    onDeviceClick = onDeviceConnectClick
+                )
+            }
+
+            BluetoothGamepadService.ConnectionState.CONNECTED -> {
+                ConnectedState(
+                    deviceName = connectedDeviceName,
+                    onStart = onStartGamepad,
+                    onDisconnect = onDisconnectClick
+                )
+            }
+        }
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// STATE-SPECIFIC CONTENT
+// ═══════════════════════════════════════════════════════════════════════════
+
+@Composable
+private fun ErrorInline(message: String) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(AccentRed.copy(alpha = 0.08f))
+            .border(1.dp, AccentRed.copy(alpha = 0.25f), RoundedCornerShape(12.dp))
+            .padding(12.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(Icons.Default.ErrorOutline, null, tint = AccentRed, modifier = Modifier.size(14.dp))
+        Text(message, fontSize = 11.sp, color = AccentRed, lineHeight = 15.sp, modifier = Modifier.weight(1f))
+    }
+}
+
+@Composable
+private fun DisconnectedState(onRequestDiscoverable: () -> Unit) {
+    Column(
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        // Friendly status text instead of "Not Connected" badge
+        Text(
+            "Ready to pair",
+            fontSize = 16.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = TextPrimary
+        )
+        Text(
+            "Make your phone discoverable, then pair from your Mac's Bluetooth settings.",
+            fontSize = 12.sp,
+            color = TextSecondary,
+            textAlign = TextAlign.Center,
+            lineHeight = 18.sp
+        )
+
+        // Primary action - prominent button
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(52.dp)
+                .clip(RoundedCornerShape(14.dp))
+                .background(
+                    Brush.linearGradient(listOf(AccentBlue, Color(0xFF2563EB)))
+                )
+                .clickable { onRequestDiscoverable() },
+            contentAlignment = Alignment.Center
+        ) {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(Icons.Default.BluetoothSearching, null, tint = Color.White, modifier = Modifier.size(20.dp))
+                Text("Make Discoverable", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = Color.White)
+            }
+        }
+    }
+}
+
+@Composable
+private fun ConnectingState() {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        CircularProgressIndicator(
+            color = AccentBlue,
+            modifier = Modifier.size(36.dp),
+            strokeWidth = 3.dp
+        )
+        Text(
+            "Setting up…",
+            fontSize = 14.sp,
+            color = TextSecondary,
+            textAlign = TextAlign.Center
+        )
+    }
+}
+
+@Composable
+private fun DiscoverableState(
+    pairedDevices: List<BluetoothDevice>,
+    onDeviceClick: (BluetoothDevice) -> Unit
+) {
+    Column(
+        verticalArrangement = Arrangement.spacedBy(16.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        // Pulsing beacon
+        PulsingBeacon()
+
+        Text(
+            "Discoverable — waiting for Mac",
+            fontSize = 15.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = TextPrimary
+        )
+
+        // Pairing guide card
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(12.dp))
+                .background(Bg3)
+                .border(1.dp, BorderSubtle, RoundedCornerShape(12.dp))
+                .padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Text("How to Pair", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = TextSecondary, letterSpacing = 0.5.sp)
+            PairingStepRow("1", "Open Bluetooth settings on your Mac")
+            PairingStepRow("2", "Remove any old phone connection")
+            PairingStepRow("3", "Find your phone name and click Connect")
+        }
+
+        // Paired Mac hosts - progressive disclosure
+        val macHosts = remember(pairedDevices) {
+            pairedDevices.filter { device ->
+                try {
+                    val name = device.name ?: ""
+                    name.contains("mac", ignoreCase = true) ||
+                    name.contains("book", ignoreCase = true) ||
+                    name.contains("imac", ignoreCase = true) ||
+                    name.contains("studio", ignoreCase = true) ||
+                    name.contains("mini", ignoreCase = true) ||
+                    name.isEmpty()
+                } catch (e: SecurityException) { true }
+            }
+        }
+
+        if (macHosts.isNotEmpty()) {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    "Previously Paired Macs",
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 1.sp,
+                    color = TextTertiary
+                )
+                macHosts.forEach { device ->
+                    val name = try { device.name ?: "Mac" } catch (e: SecurityException) { "Mac" }
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(Bg4)
+                            .border(1.dp, BorderSubtle, RoundedCornerShape(10.dp))
+                            .clickable { onDeviceClick(device) }
+                            .padding(horizontal = 14.dp, vertical = 12.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Icon(Icons.Default.Laptop, null, tint = AccentBlue, modifier = Modifier.size(18.dp))
+                            Text(name, color = TextPrimary, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                        }
+                        Icon(Icons.Default.ChevronRight, null, tint = TextSecondary, modifier = Modifier.size(16.dp))
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ConnectedState(
+    deviceName: String?,
+    onStart: () -> Unit,
+    onDisconnect: () -> Unit
+) {
+    Column(
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        // Connected status with subtle indicator
+        Row(
+            modifier = Modifier
+                .clip(RoundedCornerShape(32.dp))
+                .background(StatusConnected.copy(alpha = 0.08f))
+                .border(1.dp, StatusConnected.copy(alpha = 0.3f), RoundedCornerShape(32.dp))
+                .padding(horizontal = 16.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(StatusConnected))
+            Text("Connected to ${deviceName ?: "Mac"}", color = StatusConnected, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+        }
+
+        // Primary action - Launch Controller
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(56.dp)
+                .clip(RoundedCornerShape(16.dp))
+                .background(Brush.linearGradient(listOf(StatusConnected, Color(0xFF16A34A))))
+                .clickable { onStart() },
+            contentAlignment = Alignment.Center
+        ) {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(Icons.Default.SportsEsports, null, tint = Color.White, modifier = Modifier.size(22.dp))
+                Text("Launch Controller", fontWeight = FontWeight.ExtraBold, fontSize = 16.sp, color = Color.White)
+            }
+        }
+
+        // Disconnect - subtle text button
+        Text(
+            "Disconnect",
+            fontSize = 13.sp,
+            color = TextTertiary,
+            modifier = Modifier
+                .clickable { onDisconnect() }
+                .padding(12.dp)
+        )
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // Pulsing beacon — shown during REGISTERED_WAITING state
-// ─────────────────────────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════
+
 @Composable
 private fun PulsingBeacon() {
     val infiniteTransition = rememberInfiniteTransition(label = "beacon")
@@ -571,40 +757,10 @@ private fun PulsingBeacon() {
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Status badge
-// ─────────────────────────────────────────────────────────────────────────────
-@Composable
-private fun ConnectionStatusBadge(
-    state: BluetoothGamepadService.ConnectionState,
-    deviceName: String?
-) {
-    val (label, color) = when (state) {
-        BluetoothGamepadService.ConnectionState.DISCONNECTED   -> "Not Connected" to StatusDisconnected
-        BluetoothGamepadService.ConnectionState.REGISTERING    -> "Registering…" to StatusConnecting
-        BluetoothGamepadService.ConnectionState.REGISTERED_WAITING -> "Discoverable" to StatusConnecting
-        BluetoothGamepadService.ConnectionState.CONNECTING     -> "Connecting…" to StatusConnecting
-        BluetoothGamepadService.ConnectionState.CONNECTED      -> "Connected · ${deviceName ?: "Mac"}" to StatusConnected
-        BluetoothGamepadService.ConnectionState.ERROR          -> "Error" to StatusDisconnected
-    }
-
-    Row(
-        modifier = Modifier
-            .clip(RoundedCornerShape(32.dp))
-            .background(color.copy(alpha = 0.08f))
-            .border(1.dp, color.copy(alpha = 0.3f), RoundedCornerShape(32.dp))
-            .padding(horizontal = 16.dp, vertical = 7.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(7.dp)
-    ) {
-        Box(modifier = Modifier.size(7.dp).clip(CircleShape).background(color))
-        Text(label, color = color, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-    }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════
 // Numbered pairing step row
-// ─────────────────────────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════
+
 @Composable
 private fun PairingStepRow(num: String, text: String) {
     Row(
@@ -625,9 +781,10 @@ private fun PairingStepRow(num: String, text: String) {
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Bluetooth Enable Screen - shown when Bluetooth is disabled
-// ─────────────────────────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════
+// Bluetooth Enable Screen - shown when Bluetooth is disabled (kept for fallback)
+// ═══════════════════════════════════════════════════════════════════════════
+
 @Composable
 fun BluetoothEnableScreen(
     onEnable: () -> Unit,
@@ -635,7 +792,7 @@ fun BluetoothEnableScreen(
     modifier: Modifier = Modifier
 ) {
     val backHandlerEnabled = remember { true }
-    androidx.activity.compose.BackHandler(backHandlerEnabled) {
+    BackHandler(backHandlerEnabled) {
         // Consume back press - user must explicitly choose Enable or Cancel
     }
 
@@ -663,7 +820,7 @@ fun BluetoothEnableScreen(
                     .background(
                         Brush.radialGradient(
                             listOf(AccentBlue.copy(alpha = 0.2f), Color.Transparent),
-                            center = androidx.compose.ui.geometry.Offset(44f, 44f),
+                            center = Offset(44f, 44f),
                             radius = 60f
                         )
                     )
@@ -724,14 +881,16 @@ fun BluetoothEnableScreen(
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 // Enable Bluetooth button
-                Button(
-                    onClick = onEnable,
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = AccentBlue,
-                        contentColor = Color.White
-                    ),
-                    shape = RoundedCornerShape(14.dp)
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(52.dp)
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(
+                            Brush.linearGradient(listOf(AccentBlue, Color(0xFF2563EB)))
+                        )
+                        .clickable { onEnable() },
+                    contentAlignment = Alignment.Center
                 ) {
                     Row(
                         modifier = Modifier
@@ -746,20 +905,23 @@ fun BluetoothEnableScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Icon(Icons.Default.Bluetooth, null, tint = Color.White, modifier = Modifier.size(20.dp))
-                            Text("Enable Bluetooth", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                            Text("Enable Bluetooth", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = Color.White)
                         }
                         Icon(Icons.Default.ArrowForward, null, tint = Color.White, modifier = Modifier.size(20.dp))
                     }
                 }
 
                 // Cancel button
-                TextButton(
-                    onClick = onCancel,
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
-                    colors = ButtonDefaults.textButtonColors(contentColor = TextSecondary)
-                ) {
-                    Text("Cancel", fontWeight = FontWeight.Medium, fontSize = 14.sp, color = TextSecondary)
-                }
+                Text(
+                    "Cancel",
+                    fontWeight = FontWeight.Medium,
+                    fontSize = 14.sp,
+                    color = TextSecondary,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 8.dp)
+                        .clickable { onCancel() }
+                )
             }
 
             Spacer(Modifier.height(24.dp))
