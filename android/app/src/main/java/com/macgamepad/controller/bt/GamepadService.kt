@@ -88,7 +88,27 @@ class GamepadService : Service(), SensorEventListener {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        Log.i(TAG, "Starting GamepadService as Foreground Service...")
+        Log.i(TAG, "onStartCommand: SDK_INT=${Build.VERSION.SDK_INT}, UPSIDE_DOWN_CAKE=${Build.VERSION_CODES.UPSIDE_DOWN_CAKE}")
+        // Android 14+ (API 34+) requires FOREGROUND_SERVICE_CONNECTED_DEVICE runtime permission
+        // AND at least one of BLUETOOTH_ADVERTISE, BLUETOOTH_CONNECT, BLUETOOTH_SCAN
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            val fgPermission = android.Manifest.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE
+            val hasFgPermission = checkSelfPermission(fgPermission) == android.content.pm.PackageManager.PERMISSION_GRANTED
+            
+            val btPermissions = arrayOf(
+                android.Manifest.permission.BLUETOOTH_ADVERTISE,
+                android.Manifest.permission.BLUETOOTH_CONNECT,
+                android.Manifest.permission.BLUETOOTH_SCAN
+            )
+            val hasBtPermission = btPermissions.any { checkSelfPermission(it) == android.content.pm.PackageManager.PERMISSION_GRANTED }
+            
+            Log.w(TAG, "Permission check: hasFgPermission=$hasFgPermission, hasBtPermission=$hasBtPermission")
+            if (!hasFgPermission || !hasBtPermission) {
+                Log.w(TAG, "Missing required permissions for connectedDevice FGS, stopping self")
+                stopSelf()
+                return START_NOT_STICKY
+            }
+        }
         startForeground(NOTIFICATION_ID, createNotification())
         return START_STICKY
     }
@@ -418,6 +438,17 @@ class GamepadService : Service(), SensorEventListener {
             }
             val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
             manager.createNotificationChannel(channel)
+        }
+    }
+
+    fun recreateNotificationChannel() {
+        createNotificationChannel()
+    }
+
+    fun removeNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            manager.deleteNotificationChannel(CHANNEL_ID)
         }
     }
 

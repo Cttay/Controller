@@ -1,5 +1,7 @@
 package com.macgamepad.controller.ui.screens
 
+import android.Manifest
+import android.content.pm.PackageManager
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -19,10 +21,14 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.macgamepad.controller.GamepadViewModel
 import com.macgamepad.controller.bt.GamepadService
+import com.macgamepad.controller.bt.BluetoothGamepadService
 import com.macgamepad.controller.ui.theme.*
+import androidx.activity.compose.BackHandler
 
 @Composable
 fun SettingsScreen(
@@ -49,6 +55,8 @@ fun SettingsScreen(
     onClearAllLayouts: () -> Unit,
     // Navigation
     onBack: () -> Unit,
+    // ViewModel for permission state
+    vm: GamepadViewModel,
     modifier: Modifier = Modifier
 ) {
     val scrollState = rememberScrollState()
@@ -207,6 +215,12 @@ fun SettingsScreen(
                     subtitle = "Reconnect to last host on app launch",
                     checked = autoReconnect,
                     onCheckedChange = onAutoReconnectChange
+                )
+                HorizontalDivider(color = BorderSubtle, thickness = 0.5.dp)
+                // Connection Alerts toggle
+                SettingsScreenConnectionAlertsRow(
+                    vm = vm,
+                    onBack = onBack
                 )
             }
 
@@ -394,6 +408,61 @@ private fun SettingsRow(
             }
         }
         trailing()
+}
+}
+
+@Composable
+fun SettingsScreenConnectionAlertsRow(
+    vm: GamepadViewModel,
+    onBack: () -> Unit
+) {
+    val connectionAlertsEnabled by vm.connectionAlertsEnabled.collectAsState()
+    val permissionState by vm.permissionState.collectAsState()
+    var showPermissionRationale by remember { mutableStateOf(false) }
+
+    // Sync with actual permission state on first composition
+    val context = androidx.compose.ui.platform.LocalContext.current
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        vm.syncNotificationPermissionState()
+    }
+
+    SettingsRow(
+        icon = Icons.Default.NotificationsActive,
+        iconTint = AccentPurple,
+        title = "Connection Alerts",
+        subtitle = "Show notifications when controller connects/disconnects"
+    ) {
+        Switch(
+            checked = connectionAlertsEnabled,
+            onCheckedChange = { enabled ->
+                if (enabled) {
+                    // Check if POST_NOTIFICATIONS is already granted
+                    val granted = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+                        androidx.core.content.ContextCompat.checkSelfPermission(
+                            context, Manifest.permission.POST_NOTIFICATIONS
+                        ) == PackageManager.PERMISSION_GRANTED
+                    } else {
+                        // Pre-Android 13: notifications don't need runtime permission
+                        true
+                    }
+
+                    if (granted) {
+                        vm.setConnectionAlertsEnabled(true)
+                    } else {
+                        // Request permission
+                        vm.setConnectionAlertsEnabled(true)
+                    }
+                } else {
+                    vm.setConnectionAlertsEnabled(false)
+                }
+            },
+            colors = SwitchDefaults.colors(
+                checkedThumbColor = Color.White,
+                checkedTrackColor = AccentPurple,
+                uncheckedThumbColor = TextTertiary,
+                uncheckedTrackColor = Bg4
+            )
+        )
     }
 }
 

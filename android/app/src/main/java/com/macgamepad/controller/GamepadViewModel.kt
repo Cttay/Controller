@@ -2,9 +2,19 @@ package com.macgamepad.controller
 
 import android.app.Application
 import android.content.Context
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.net.Uri
+import android.os.Build
+import android.provider.Settings
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.DefaultLifecycleObserver
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleOwner
 import android.bluetooth.BluetoothDevice
+import androidx.core.content.ContextCompat
+import android.Manifest
 import com.macgamepad.controller.bt.BluetoothGamepadService
 import com.macgamepad.controller.bt.GamepadService
 import com.macgamepad.controller.input.InputState
@@ -98,6 +108,66 @@ class GamepadViewModel(application: Application) : AndroidViewModel(application)
 
     private val _vibrationEnabled = MutableStateFlow(prefs.getBoolean("pref_vibration", true))
     val vibrationEnabled: StateFlow<Boolean> = _vibrationEnabled.asStateFlow()
+
+    // ================================================================
+    // Permission State Machine
+    // ================================================================
+    sealed interface PermissionStatus {
+        object Granted : PermissionStatus
+        data class Denied(val shouldShowRationale: Boolean, val missingPermissions: List<String>) : PermissionStatus
+        data class PermanentlyDenied(val missingPermissions: List<String>) : PermissionStatus
+        object Unknown : PermissionStatus
+    }
+
+    private val _permissionState = MutableStateFlow<PermissionStatus>(PermissionStatus.Unknown)
+    val permissionState: StateFlow<PermissionStatus> = _permissionState.asStateFlow()
+
+    private val _isRequestingPermissions = MutableStateFlow(false)
+    val isRequestingPermissions: StateFlow<Boolean> = _isRequestingPermissions.asStateFlow()
+
+    private var hasDoneInitialPermissionCheck = false
+
+    // Persisted flag to distinguish first-time denial from "Don't ask again"
+    private var hasEverRequestedBluetoothPermissions: Boolean
+        get() = prefs.getBoolean("pref_bt_perm_requested", false)
+        set(value) = prefs.edit().putBoolean("pref_bt_perm_requested", value).apply()
+
+    // Notification opt-in preference
+    private val _connectionAlertsEnabled = MutableStateFlow(prefs.getBoolean("pref_connection_alerts", false))
+    val connectionAlertsEnabled: StateFlow<Boolean> = _connectionAlertsEnabled.asStateFlow()
+
+    // Bluetooth permissions required for HID Device profile (API 31+)
+    private val bluetoothPermissions = listOf(
+        android.Manifest.permission.BLUETOOTH_CONNECT,
+        android.Manifest.permission.BLUETOOTH_SCAN,
+        android.Manifest.permission.BLUETOOTH_ADVERTISE
+    )
+
+    // Permission callback interface for MainActivity
+    interface PermissionCallback {
+        fun requestBluetoothPermissions(permissions: Array<String>)
+        fun requestDiscoverability()
+        fun requestNotificationPermission()
+        fun requestBluetoothEnable()
+    }
+
+    private var permissionCallback: PermissionCallback? = null
+
+    fun setPermissionCallback(callback: PermissionCallback) {
+        permissionCallback = callback
+    }
+
+    init {
+        // Register lifecycle observer for permission re-check on resume
+        (getApplication() as? androidx.lifecycle.LifecycleOwner)?.lifecycle?.addObserver(object : DefaultLifecycleObserver {
+            override fun onResume(owner: LifecycleOwner) {
+                if (!hasDoneInitialPermissionCheck) {
+                    hasDoneInitialPermissionCheck = true
+                }
+                checkAndUpdatePermissionState(getApplication())
+            }
+        })
+    }
 
     fun setService(service: GamepadService?) {
         _gamepadService.value = service
@@ -410,5 +480,167 @@ class GamepadViewModel(application: Application) : AndroidViewModel(application)
 
     fun onTouchpadClick() {
         _gamepadService.value?.triggerMouseClick()
+    }
+
+    // ================================================================
+    // Permission Flow API
+    // ================================================================
+
+    private fun checkAndUpdatePermissionState(context: Context) {
+        _permissionState.value = checkBluetoothPermissions(context)
+    }
+
+    fun checkBluetoothPermissions(context: Context): PermissionStatus {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
+            // API < 31: legacy permissions are install-time, consider granted if app runs
+            return PermissionStatus.Granted
+        }
+
+        val missingPermissions = mutableListOf<String>()
+        var anyRationale = false
+        var anyPermanentDenial = false
+
+        for (perm in bluetoothPermissions) {
+            val granted = ContextCompat.checkSelfPermission(context, perm) == PackageManager.PERMISSION_GRANTED
+            if (!granted) {
+                missingPermissions.add(perm)
+                val rationale = androidx.core.app.ActivityCompat.shouldShowRequestPermissionRationale(
+                    context as androidx.activity.ComponentActivity, perm)
+                if (rationale) {
+                    anyRationale = true
+                } else if (hasEverRequestedBluetoothPermissions) {
+                    anyPermanentDenial = true
+                }
+            }
+        }
+
+        return when {
+            missingPermissions.isEmpty() -> PermissionStatus.Granted
+            anyPermanentDenial -> PermissionStatus.PermanentlyDenied(missingPermissions)
+            else -> PermissionStatus.Denied(anyRationale, missingPermissions)
+        }
+    }
+
+    fun requestBluetoothPermissions(missingPermissions: List<String> = bluetoothPermissions) {
+        if (_isRequestingPermissions.value) return
+        _isRequestingPermissions.value = true
+        hasEverRequestedBluetoothPermissions = true
+        permissionCallback?.requestBluetoothPermissions(missingPermissions.toTypedArray())
+    }
+
+    fun onBluetoothPermissionsResult(results: Map<String, Boolean>) {
+        _isRequestingPermissions.value = false
+        val context = getApplication<Application>() as Context
+        val missingAfterRequest = mutableListOf<String>()
+        var anyRationale = false
+        var anyPermanentDenial = false
+
+        for ((perm, granted) in results) {
+            if (!granted && perm in bluetoothPermissions) {
+                missingAfterRequest.add(perm)
+                val rationale = androidx.core.app.ActivityCompat.shouldShowRequestPermissionRationale(
+                    context as androidx.activity.ComponentActivity, perm)
+                if (rationale) {
+                    anyRationale = true
+                } else if (hasEverRequestedBluetoothPermissions) {
+                    anyPermanentDenial = true
+                }
+            }
+        }
+
+        _permissionState.value = when {
+            missingAfterRequest.isEmpty() -> PermissionStatus.Granted
+            anyPermanentDenial -> PermissionStatus.PermanentlyDenied(missingAfterRequest)
+            else -> PermissionStatus.Denied(anyRationale, missingAfterRequest)
+        }
+    }
+
+    fun requestDiscoverability() {
+        permissionCallback?.requestDiscoverability()
+    }
+
+    fun onDiscoverabilityResult(resultCode: Int) {
+        // Both RESULT_OK and RESULT_CANCELED (timeout/denial) proceed to HID init
+        Log.i(TAG, "Discoverability result: $resultCode, proceeding to HID initialization")
+        initializeBluetooth()
+    }
+
+    fun onDiscoverabilitySkipped() {
+        Log.i(TAG, "Discoverability skipped, proceeding to HID initialization")
+        initializeBluetooth()
+    }
+
+    fun openAppSettings() {
+        val context = getApplication() as Context
+        val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+            data = Uri.fromParts("package", context.packageName, null)
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+        }
+        context.startActivity(intent)
+    }
+
+    // Public method for UI to trigger permission re-check
+    fun recheckPermissions() {
+        checkAndUpdatePermissionState(getApplication() as Context)
+    }
+
+    // Bluetooth enable prompt
+    fun requestBluetoothEnable() {
+        permissionCallback?.requestBluetoothEnable()
+    }
+
+    // ================================================================
+    // Notification Opt-In API
+    // ================================================================
+
+    fun requestNotificationPermission() {
+        permissionCallback?.requestNotificationPermission()
+    }
+
+    fun onNotificationPermissionResult(granted: Boolean) {
+        if (granted) {
+            _connectionAlertsEnabled.value = true
+            prefs.edit().putBoolean("pref_connection_alerts", true).apply()
+            // Recreate notification channel if service is running
+            _gamepadService.value?.btService?.recreateNotificationChannel()
+        } else {
+            _connectionAlertsEnabled.value = false
+            prefs.edit().putBoolean("pref_connection_alerts", false).apply()
+        }
+    }
+
+    fun setConnectionAlertsEnabled(enabled: Boolean) {
+        if (enabled) {
+            // Check current permission state first
+            val context = getApplication() as Context
+            val granted = ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+            if (granted) {
+                _connectionAlertsEnabled.value = true
+                prefs.edit().putBoolean("pref_connection_alerts", true).apply()
+                _gamepadService.value?.btService?.recreateNotificationChannel()
+            } else {
+                requestNotificationPermission()
+            }
+        } else {
+            _connectionAlertsEnabled.value = false
+            prefs.edit().putBoolean("pref_connection_alerts", false).apply()
+            _gamepadService.value?.btService?.removeNotificationChannel()
+        }
+    }
+
+    fun syncNotificationPermissionState() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            val context = getApplication() as Context
+            val granted = ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+            if (granted != _connectionAlertsEnabled.value) {
+                _connectionAlertsEnabled.value = granted
+                prefs.edit().putBoolean("pref_connection_alerts", granted).apply()
+            }
+        }
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        // Cleanup if needed
     }
 }

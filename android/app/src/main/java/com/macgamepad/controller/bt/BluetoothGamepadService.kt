@@ -1,9 +1,14 @@
 package com.macgamepad.controller.bt
 
 import android.annotation.SuppressLint
+import android.app.NotificationChannel
+import android.app.NotificationManager
 import android.bluetooth.*
 import android.content.Context
+import android.os.Build
 import android.util.Log
+import androidx.core.app.NotificationCompat
+import androidx.core.app.NotificationManagerCompat
 import com.macgamepad.controller.input.InputState
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -32,6 +37,9 @@ class BluetoothGamepadService(private val context: Context) {
 
         // HID subclass for gamepad
         private const val HID_SUBCLASS_GAMEPAD: Byte = 0x02
+
+        // Notification channel
+        private const val CHANNEL_ID = "macgamepad_service_channel"
     }
 
     // ================================================================
@@ -245,7 +253,7 @@ class BluetoothGamepadService(private val context: Context) {
 
         val reportData = reportPacker.pack(state)
         // Always use Report ID 3 — the gamepad collection inside the unified descriptor
-        return hid.sendReport(device, KeyboardHidDescriptor.GAMEPAD_REPORT_ID.toInt(), reportData)
+        return hid.sendReport(device, GamepadHidDescriptor.GAMEPAD_REPORT_ID.toInt(), reportData)
     }
 
     /**
@@ -276,7 +284,7 @@ class BluetoothGamepadService(private val context: Context) {
 
     // Customizable Bluetooth display name to match target controllers
     @Volatile
-    private var targetDeviceName = "Wireless Controller"
+    private var targetDeviceName = "MacGamepad"
 
     fun setTargetDeviceName(name: String) {
         targetDeviceName = name
@@ -294,15 +302,9 @@ class BluetoothGamepadService(private val context: Context) {
             return
         }
 
-        // Always use the unified descriptor (gamepad + keyboard + mouse in a single
-        // SDP record). The Gamepad collection is placed FIRST in the descriptor so
-        // macOS GameController.framework recognizes this as a controller device.
-        // Subclass MUST be SUBCLASS2_GAMEPAD for macOS to set the Bluetooth CoD
-        // to Peripheral > Gamepad — this is what makes it show as a real controller.
         val subclass: Byte = BluetoothHidDevice.SUBCLASS2_GAMEPAD
-        val descriptor = KeyboardHidDescriptor.descriptor
+        val descriptor = GamepadHidDescriptor.descriptor
 
-        // SDP settings: what the host sees when discovering this device
         val sdpSettings = BluetoothHidDeviceAppSdpSettings(
             targetDeviceName,
             DEVICE_DESCRIPTION,
@@ -325,6 +327,28 @@ class BluetoothGamepadService(private val context: Context) {
             _errorMessage.value = "Failed to register HID app. Is Bluetooth HID Device profile supported?"
             _connectionState.value = ConnectionState.ERROR
             Log.e(TAG, "❌ registerApp() returned false")
+        }
+    }
+
+    // Notification channel methods for connection alerts
+    fun recreateNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(
+                CHANNEL_ID,
+                "MacGamepad Connection Service",
+                NotificationManager.IMPORTANCE_LOW
+            ).apply {
+                description = "Keeps Bluetooth controller connection alive in background"
+            }
+            val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            manager.createNotificationChannel(channel)
+        }
+    }
+
+    fun removeNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            manager.deleteNotificationChannel(CHANNEL_ID)
         }
     }
 }

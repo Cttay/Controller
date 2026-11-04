@@ -1,26 +1,119 @@
 package com.macgamepad.controller.bt
 
 /**
- * Unified HID Report Descriptor: Keyboard + Mouse + Gamepad.
+ * Unified HID Report Descriptor: Gamepad + Keyboard + Mouse.
  *
- * Keyboard is kept first (Report ID 1) because macOS built-in drivers expect
- * it at ID 1 for native keyboard functionality. Gamepad (Report ID 3) works
- * through Steam Input or direct raw HID access (e.g. SDL2 emulators).
+ * Gamepad is kept FIRST (Report ID 1) so macOS GameController.framework
+ * recognizes this as a native gamepad. Keyboard (ID 2) and Mouse (ID 3)
+ * work for text input and cursor control.
+ *
+ * Gamepad report (12 bytes, excluding Report ID):
+ *   Byte 0-1:   Left Stick X   (int16 LE)
+ *   Byte 2-3:   Left Stick Y   (int16 LE)
+ *   Byte 4-5:   Right Stick X  (int16 LE)
+ *   Byte 6-7:   Right Stick Y  (int16 LE)
+ *   Byte 8:     Buttons 1-6 (A,B,X,Y,LB,RB) in bits 0-5, bits 6-7 = padding
+ *   Byte 9:     Left Trigger  (uint8, 0-255) — Button 7
+ *   Byte 10:    Right Trigger (uint8, 0-255) — Button 8
+ *   Byte 11:    Buttons 9-17 (Back,Start,L3,R3,DPadU,D,D,L,R,Guide) in bits 0-8, bits 9-15 = padding
+ *
+ * Button mapping matches W3C "standard" gamepad layout:
+ *   0: A, 1: B, 2: X, 3: Y, 4: LB, 5: RB, 6: LT, 7: RT,
+ *   8: Back/Select, 9: Start, 10: L3, 11: R3,
+ *   12: DPadUp, 13: DPadDown, 14: DPadLeft, 15: DPadRight, 16: Guide/Home
  */
 object KeyboardHidDescriptor {
 
-    const val KEYBOARD_REPORT_ID: Byte = 0x01
-    const val MOUSE_REPORT_ID: Byte = 0x02
-    const val GAMEPAD_REPORT_ID: Byte = 0x03
+    const val GAMEPAD_REPORT_ID: Byte = 0x01
+    const val KEYBOARD_REPORT_ID: Byte = 0x02
+    const val MOUSE_REPORT_ID: Byte = 0x03
+
+    // Gamepad report size (excluding Report ID)
+    const val GAMEPAD_REPORT_SIZE = 12
 
     val descriptor: ByteArray = byteArrayOf(
         // ============================================================
-        // KEYBOARD (Report ID 1)
+        // GAMEPAD (Report ID 1) — MUST BE FIRST for macOS GameController.framework
+        // Designed to match W3C "standard" gamepad mapping
+        // ============================================================
+        0x05, 0x01,             // USAGE_PAGE (Generic Desktop)
+        0x09, 0x05,             // USAGE (Game Pad)
+        0xA1.toByte(), 0x01,    // COLLECTION (Application)
+        0x85.toByte(), GAMEPAD_REPORT_ID, // REPORT_ID (1)
+
+        // String descriptor index for product name
+        0x05, 0x01,             //   USAGE_PAGE (Generic Desktop)
+        0x09, 0x05,             //   USAGE (Game Pad)
+        // Product String Index (we'll add this via String Descriptor)
+
+        // Left Stick (X, Y)
+        0x05, 0x01,             //   USAGE_PAGE (Generic Desktop)
+        0x09, 0x30,             //   USAGE (X)
+        0x09, 0x31,             //   USAGE (Y)
+        0x16, 0x01, 0x80.toByte(), //   LOGICAL_MINIMUM (-32767)
+        0x26, 0xFF.toByte(), 0x7F, //   LOGICAL_MAXIMUM (32767)
+        0x75, 0x10,             //   REPORT_SIZE (16)
+        0x95.toByte(), 0x02,    //   REPORT_COUNT (2)
+        0x81.toByte(), 0x02,    //   INPUT (Data, Variable, Absolute)
+
+        // Right Stick (Rx, Ry)
+        0x09, 0x33,             //   USAGE (Rx)
+        0x09, 0x34,             //   USAGE (Ry)
+        0x16, 0x01, 0x80.toByte(), //   LOGICAL_MINIMUM (-32767)
+        0x26, 0xFF.toByte(), 0x7F, //   LOGICAL_MAXIMUM (32767)
+        0x75, 0x10,             //   REPORT_SIZE (16)
+        0x95.toByte(), 0x02,    //   REPORT_COUNT (2)
+        0x81.toByte(), 0x02,    //   INPUT (Data, Variable, Absolute)
+
+        // Buttons 1-6: A, B, X, Y, LB, RB (1 bit each)
+        0x05, 0x09,             //   USAGE_PAGE (Button)
+        0x19, 0x01,             //   USAGE_MINIMUM (Button 1)
+        0x29, 0x06,             //   USAGE_MAXIMUM (Button 6)
+        0x15, 0x00,             //   LOGICAL_MINIMUM (0)
+        0x25, 0x01,             //   LOGICAL_MAXIMUM (1)
+        0x75, 0x01,             //   REPORT_SIZE (1)
+        0x95.toByte(), 0x06,    //   REPORT_COUNT (6)
+        0x81.toByte(), 0x02,    //   INPUT (Data, Variable, Absolute)
+
+        // Padding (2 bits) to byte-align
+        0x75, 0x02,             //   REPORT_SIZE (2)
+        0x95.toByte(), 0x01,    //   REPORT_COUNT (1)
+        0x81.toByte(), 0x03,    //   INPUT (Constant, Variable, Absolute)
+
+        // Buttons 7-8: LT, RT as 8-bit analog values (0-255)
+        0x05, 0x09,             //   USAGE_PAGE (Button)
+        0x19, 0x07,             //   USAGE_MINIMUM (Button 7)
+        0x29, 0x08,             //   USAGE_MAXIMUM (Button 8)
+        0x15, 0x00,             //   LOGICAL_MINIMUM (0)
+        0x26, 0xFF.toByte(), 0x00, //   LOGICAL_MAXIMUM (255)
+        0x75, 0x08,             //   REPORT_SIZE (8)
+        0x95.toByte(), 0x02,    //   REPORT_COUNT (2)
+        0x81.toByte(), 0x02,    //   INPUT (Data, Variable, Absolute)
+
+        // Buttons 9-17: Back, Start, L3, R3, DPadUp, DPadDown, DPadLeft, DPadRight, Guide (1 bit each)
+        0x05, 0x09,             //   USAGE_PAGE (Button)
+        0x19, 0x09,             //   USAGE_MINIMUM (Button 9)
+        0x29, 0x11,             //   USAGE_MAXIMUM (Button 17)
+        0x15, 0x00,             //   LOGICAL_MINIMUM (0)
+        0x25, 0x01,             //   LOGICAL_MAXIMUM (1)
+        0x75, 0x01,             //   REPORT_SIZE (1)
+        0x95.toByte(), 0x09,    //   REPORT_COUNT (9)
+        0x81.toByte(), 0x02,    //   INPUT (Data, Variable, Absolute)
+
+        // Padding (7 bits) to byte-align
+        0x75, 0x07,             //   REPORT_SIZE (7)
+        0x95.toByte(), 0x01,    //   REPORT_COUNT (1)
+        0x81.toByte(), 0x03,    //   INPUT (Constant, Variable, Absolute)
+
+        0xC0.toByte(),           // END_COLLECTION
+
+        // ============================================================
+        // KEYBOARD (Report ID 2)
         // ============================================================
         0x05, 0x01,         // USAGE_PAGE (Generic Desktop)
         0x09, 0x06,         // USAGE (Keyboard)
         0xA1.toByte(), 0x01, // COLLECTION (Application)
-        0x85.toByte(), KEYBOARD_REPORT_ID, // REPORT_ID (1)
+        0x85.toByte(), KEYBOARD_REPORT_ID, // REPORT_ID (2)
 
         // Modifier keys (8 bits)
         0x05, 0x07,         //   USAGE_PAGE (Keyboard/Keypad)
@@ -50,14 +143,14 @@ object KeyboardHidDescriptor {
         0xC0.toByte(),       // END_COLLECTION
 
         // ============================================================
-        // Mouse/Trackpad (Report ID 2)
+        // Mouse/Trackpad (Report ID 3)
         // ============================================================
         0x05, 0x01,         // USAGE_PAGE (Generic Desktop)
         0x09, 0x02,         // USAGE (Mouse)
         0xA1.toByte(), 0x01, // COLLECTION (Application)
         0x09, 0x01,         //   USAGE (Pointer)
         0xA1.toByte(), 0x00, //   COLLECTION (Physical)
-        0x85.toByte(), MOUSE_REPORT_ID, //     REPORT_ID (2)
+        0x85.toByte(), MOUSE_REPORT_ID, //     REPORT_ID (3)
 
         // Mouse Buttons (Left, Right, Middle)
         0x05, 0x09,         //     USAGE_PAGE (Button)
@@ -93,73 +186,7 @@ object KeyboardHidDescriptor {
         0x81.toByte(), 0x06, //     INPUT (Data, Variable, Relative)
 
         0xC0.toByte(),       //   END_COLLECTION
-        0xC0.toByte(),       // END_COLLECTION
-
-        // ============================================================
-        // Gamepad (Report ID 3)
-        // ============================================================
-        0x05, 0x01,             // USAGE_PAGE (Generic Desktop)
-        0x09, 0x05,             // USAGE (Game Pad)
-        0xA1.toByte(), 0x01,    // COLLECTION (Application)
-        0x85.toByte(), GAMEPAD_REPORT_ID, // REPORT_ID (3)
-
-        // Left Stick (X, Y)
-        0x05, 0x01,             //   USAGE_PAGE (Generic Desktop)
-        0x09, 0x30,             //   USAGE (X)
-        0x09, 0x31,             //   USAGE (Y)
-        0x16, 0x01, 0x80.toByte(), //   LOGICAL_MINIMUM (-32767)
-        0x26, 0xFF.toByte(), 0x7F, //   LOGICAL_MAXIMUM (32767)
-        0x75, 0x10,             //   REPORT_SIZE (16)
-        0x95.toByte(), 0x02,    //   REPORT_COUNT (2)
-        0x81.toByte(), 0x02,    //   INPUT (Data, Variable, Absolute)
-
-        // Right Stick (Rx, Ry)
-        0x09, 0x33,             //   USAGE (Rx)
-        0x09, 0x34,             //   USAGE (Ry)
-        0x16, 0x01, 0x80.toByte(), //   LOGICAL_MINIMUM (-32767)
-        0x26, 0xFF.toByte(), 0x7F, //   LOGICAL_MAXIMUM (32767)
-        0x75, 0x10,             //   REPORT_SIZE (16)
-        0x95.toByte(), 0x02,    //   REPORT_COUNT (2)
-        0x81.toByte(), 0x02,    //   INPUT (Data, Variable, Absolute)
-
-        // Hat switch (D-Pad)
-        0x05, 0x01,             //   USAGE_PAGE (Generic Desktop)
-        0x09, 0x39,             //   USAGE (Hat Switch)
-        0x15, 0x00,             //   LOGICAL_MINIMUM (0)
-        0x25, 0x07,             //   LOGICAL_MAXIMUM (7)
-        0x35, 0x00,             //   PHYSICAL_MINIMUM (0)
-        0x46, 0x3B, 0x01,      //   PHYSICAL_MAXIMUM (315 degrees)
-        0x65, 0x14,             //   UNIT (Degrees)
-        0x75, 0x04,             //   REPORT_SIZE (4)
-        0x95.toByte(), 0x01,    //   REPORT_COUNT (1)
-        0x81.toByte(), 0x42,    //   INPUT (Data, Variable, Absolute, Null State)
-
-        // 4-bit padding after D-pad
-        0x75, 0x04,             //   REPORT_SIZE (4)
-        0x95.toByte(), 0x01,    //   REPORT_COUNT (1)
-        0x81.toByte(), 0x03,    //   INPUT (Const, Var, Abs)
-
-        // Buttons
-        0x05, 0x09,             //   USAGE_PAGE (Button)
-        0x19, 0x01,             //   USAGE_MINIMUM (Button 1)
-        0x29, 0x10,             //   USAGE_MAXIMUM (Button 16)
-        0x15, 0x00,             //   LOGICAL_MINIMUM (0)
-        0x25, 0x01,             //   LOGICAL_MAXIMUM (1)
-        0x75, 0x01,             //   REPORT_SIZE (1)
-        0x95.toByte(), 0x10,    //   REPORT_COUNT (16)
-        0x81.toByte(), 0x02,    //   INPUT (Data, Var, Abs)
-
-        // Triggers (Z/Rz)
-        0x05, 0x01,             //   USAGE_PAGE (Generic Desktop)
-        0x09, 0x32,             //   USAGE (Z)
-        0x09, 0x35,             //   USAGE (Rz)
-        0x15, 0x00,             //   LOGICAL_MINIMUM (0)
-        0x26, 0xFF.toByte(), 0x00, //   LOGICAL_MAXIMUM (255)
-        0x75, 0x08,             //   REPORT_SIZE (8)
-        0x95.toByte(), 0x02,    //   REPORT_COUNT (2)
-        0x81.toByte(), 0x02,    //   INPUT (Data, Var, Abs)
-
-        0xC0.toByte()           // END_COLLECTION
+        0xC0.toByte()        // END_COLLECTION
     )
 
     object Keycodes {

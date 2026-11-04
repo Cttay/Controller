@@ -13,7 +13,7 @@ import org.junit.Assert.assertFalse
  */
 class KeyboardMapperTest {
 
-    private val mapper = com.macgamepad.controller.bt.KeyboardMapper()
+    private val mapper = com.macgamepad.controller.bt.KeyboardMapper
 
     // Keycode constants matching KeyboardHidDescriptor.Keycodes
     companion object {

@@ -38,23 +38,23 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 
-class MainActivity : ComponentActivity() {
+class MainActivity : ComponentActivity(), GamepadViewModel.PermissionCallback {
 
     companion object {
         private const val TAG = "MainActivity"
     }
 
-    private val requiredPermissions: Array<String>
-        get() = mutableListOf<String>().apply {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                add(Manifest.permission.BLUETOOTH_CONNECT)
-                add(Manifest.permission.BLUETOOTH_SCAN)
-                add(Manifest.permission.BLUETOOTH_ADVERTISE)
-            } else {
-                add(Manifest.permission.BLUETOOTH)
-                add(Manifest.permission.BLUETOOTH_ADMIN)
-            }
-        }.toTypedArray()
+    private val bluetoothPermissions: Array<String>
+        get() = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            arrayOf(
+                Manifest.permission.BLUETOOTH_CONNECT,
+                Manifest.permission.BLUETOOTH_SCAN,
+                Manifest.permission.BLUETOOTH_ADVERTISE
+            )
+        } else {
+            // API < 31: legacy permissions are install-time
+            arrayOf()
+        }
 
     private var viewModelRef: GamepadViewModel? = null
     private var gamepadService: GamepadService? = null
@@ -72,10 +72,8 @@ class MainActivity : ComponentActivity() {
             viewModelRef?.let { vm ->
                 vm.setService(srv)
                 startStateCollection(srv, vm)
-                // Initialize Bluetooth after service is bound and permissions granted
-                if (requiredPermissions.all { ContextCompat.checkSelfPermission(this@MainActivity, it) == PackageManager.PERMISSION_GRANTED }) {
-                    vm.initializeBluetooth()
-                }
+                // Initialize Bluetooth after service is bound (permission flow already completed)
+                vm.initializeBluetooth()
             }
         }
 
@@ -121,11 +119,12 @@ class MainActivity : ComponentActivity() {
         WindowCompat.setDecorFitsSystemWindows(window, false)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
-        // Defer service start until permissions granted
+        // No auto permission check or service binding on launch
         setContent {
             MacGamepadTheme {
                 val vm: GamepadViewModel = viewModel()
                 viewModelRef = vm
+                vm.setPermissionCallback(this)
 
                 // Sync service if bound late
                 LaunchedEffect(gamepadService) {
@@ -138,6 +137,14 @@ class MainActivity : ComponentActivity() {
                 val errorMessage by vm.errorMessage.collectAsState()
                 val activeProfileId by vm.activeProfileId.collectAsState()
                 val mode by vm.mode.collectAsState()
+
+                // Bind to service when permissions are granted
+                val permissionState by vm.permissionState.collectAsState()
+                LaunchedEffect(permissionState) {
+                    if (permissionState is GamepadViewModel.PermissionStatus.Granted && !isBound && gamepadService == null) {
+                        bindToService()
+                    }
+                }
 
                 // Immersive landscape vs Portrait control matching
                 LaunchedEffect(currentScreen) {
@@ -176,9 +183,9 @@ class MainActivity : ComponentActivity() {
                                 errorMessage = errorMessage,
                                 pairedDevices = pairedDevices,
                                 onDeviceConnectClick = { vm.connectToDevice(it) },
-                                onConnectClick = { checkPermissionsAndConnect() },
                                 onDisconnectClick = { vm.disconnect() },
                                 onStartGamepad = { vm.navigateToGamepad() },
+                                vm = vm,
                                 modifier = Modifier.fillMaxSize()
                             )
                         }
@@ -275,6 +282,7 @@ class MainActivity : ComponentActivity() {
                                 estimatedStorageBytes = storageBytes,
                                 onClearAllLayouts = { vm.clearAllLayouts() },
                                 onBack = { vm.navigateToDashboard() },
+                                vm = vm,
                                 modifier = Modifier.fillMaxSize()
                             )
                         }
@@ -286,9 +294,14 @@ class MainActivity : ComponentActivity() {
 
     override fun onStart() {
         super.onStart()
-        // Bind to service only if permissions already granted
-        if (requiredPermissions.all { ContextCompat.checkSelfPermission(this, it) == PackageManager.PERMISSION_GRANTED }) {
-            bindToService()
+        // Bind to service only if permission flow is complete (granted + discoverability done)
+        // ViewModel will call initializeBluetooth() which starts the session
+        val vm = viewModelRef
+        if (vm != null && vm.permissionState.value is GamepadViewModel.PermissionStatus.Granted) {
+            // Check if discoverability was completed (service not bound yet)
+            if (!isBound && gamepadService == null) {
+                bindToService()
+            }
         }
     }
 
@@ -310,60 +323,48 @@ class MainActivity : ComponentActivity() {
         ActivityResultContracts.RequestMultiplePermissions()
     ) { results ->
         Log.d(TAG, "Permission request results: $results")
-        val bluetoothGranted = requiredPermissions.all { results[it] == true }
-        if (bluetoothGranted) {
-            Log.i(TAG, "Required Bluetooth permissions granted from dialog")
-            onPermissionsGranted()
-        } else {
-            val denied = requiredPermissions.filter { results[it] != true }
-            Log.e(TAG, "Required Bluetooth permissions denied: $denied")
-        }
+        viewModelRef?.onBluetoothPermissionsResult(results)
     }
 
-    private fun checkPermissionsAndConnect() {
-        val missingRequired = requiredPermissions.filter {
-            ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
-        }
-
-        val allToRequest = mutableListOf<String>().apply {
-            addAll(missingRequired)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                if (ContextCompat.checkSelfPermission(this@MainActivity, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
-                    add(Manifest.permission.POST_NOTIFICATIONS)
-                }
-            }
-        }
-
-        Log.d(TAG, "Checking permissions. Missing required: $missingRequired, All to request: $allToRequest")
-
-        if (missingRequired.isEmpty()) {
-            Log.i(TAG, "Required Bluetooth permissions already granted")
-            onPermissionsGranted()
-        } else {
-            Log.i(TAG, "Requesting permissions: $allToRequest")
-            permissionLauncher.launch(allToRequest.toTypedArray())
-        }
-    }
-
-    /**
-     * Request Bluetooth discoverability so the Mac can find this phone during scanning.
-     * Duration: 300 seconds (5 minutes). Android shows a system dialog to the user.
-     */
     private val discoverableLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
         Log.i(TAG, "Discoverability result code: ${result.resultCode}")
-        // resultCode == RESULT_CANCELED means user denied, > 0 means granted for that many seconds
-        // BT initialization now happens in onServiceConnected after permissions granted
+        viewModelRef?.onDiscoverabilityResult(result.resultCode)
     }
 
-    private fun onPermissionsGranted() {
-        Log.i(TAG, "onPermissionsGranted() called, requesting discoverability...")
-        // Request discoverability so the phone appears in the Mac's Bluetooth scan
+    private val notificationPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        Log.d(TAG, "Notification permission result: $granted")
+        viewModelRef?.onNotificationPermissionResult(granted)
+    }
+
+    private val bluetoothEnableLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        Log.i(TAG, "Bluetooth enable result: ${result.resultCode}")
+    }
+
+    // PermissionCallback implementation
+    override fun requestBluetoothPermissions(permissions: Array<String>) {
+        permissionLauncher.launch(permissions)
+    }
+
+    override fun requestDiscoverability() {
         val discoverableIntent = Intent(android.bluetooth.BluetoothAdapter.ACTION_REQUEST_DISCOVERABLE).apply {
             putExtra(android.bluetooth.BluetoothAdapter.EXTRA_DISCOVERABLE_DURATION, 300)
         }
         discoverableLauncher.launch(discoverableIntent)
+    }
+
+    override fun requestNotificationPermission() {
+        notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+    }
+
+    override fun requestBluetoothEnable() {
+        val enableIntent = Intent(android.bluetooth.BluetoothAdapter.ACTION_REQUEST_ENABLE)
+        bluetoothEnableLauncher.launch(enableIntent)
     }
 
     override fun onDestroy() {
