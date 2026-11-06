@@ -253,7 +253,9 @@ fun DashboardScreen(
         modifier = modifier
             .fillMaxSize()
             .background(Brush.verticalGradient(listOf(Bg0, Bg1, Bg1)))
-            .padding(horizontal = 16.dp, vertical = 12.dp),
+            .padding(horizontal = 16.dp, vertical = 12.dp)
+            .statusBarsPadding()
+            .navigationBarsPadding(),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
 

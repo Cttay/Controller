@@ -46,6 +46,8 @@ fun ProfileScreen(
             .fillMaxSize()
             .background(Bg1)
             .verticalScroll(scrollState)
+            .statusBarsPadding()
+            .navigationBarsPadding()
     ) {
         // ── Header ──────────────────────────────────────────────────────────
         Row(

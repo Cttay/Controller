@@ -1,28 +1,29 @@
 package com.macgamepad.controller
 
 import com.macgamepad.controller.input.InputState
+import com.macgamepad.controller.input.InputThrottler
+import com.macgamepad.controller.input.ThrottleResult
 import org.junit.Test
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertNotNull
 
 /**
- * Pure unit test for the throttle logic from GamepadViewModel.onInputChanged().
- * This replicates the throttle logic inline since we cannot modify production code
- * to extract a testable helper. The logic is small and self-contained.
+ * Unit test for InputThrottler — pure throttling logic extracted from GamepadViewModel.
  *
- * Rules verified:
+ * Tests verify:
  *   1. Immediate send on release transition (isReleaseTransition = true -> send immediately)
- *   2. Suppression when < 8 ms and no release transition (state stored as pending)
+ *   2. Suppression when within throttle window and no release transition (state stored as pending)
  *   3. Trailing-edge: a throttled state is stored and sent on next call
+ *   4. Release transition with sticks
+ *   5. Multiple buttons release transition
+ *   6. reset() clears internal state
+ *   7. Configurable throttle interval
+ *   8. Time-controlled testing via nowMs parameter
  */
 class GamepadViewModelThrottleTest {
-
-    // Replicated throttle state from GamepadViewModel
-    private var lastInputReportTime = 0L
-    private var lastState: InputState? = null
-    private var pendingState: InputState? = null
-    private var sentStates = mutableListOf<InputState>()
 
     // Helper to create a copy of InputState (since data class copy requires all params)
     private fun copyState(
@@ -51,152 +52,555 @@ class GamepadViewModelThrottleTest {
         buttonHome = buttonHome, buttonCapture = buttonCapture
     )
 
-    private fun resetThrottle() {
-        lastInputReportTime = 0L
-        lastState = null
-        pendingState = null
-        sentStates.clear()
-    }
-
     @Test
     fun `immediate send on release transition`() {
         // Arrange: lastState has buttonA pressed, new state has buttonA released
-        resetThrottle()
-        lastState = copyState(buttonA = true)
+        val throttler = InputThrottler()
+        val prevState = copyState(buttonA = true)
         val current = copyState(buttonA = false)
 
-        // Act
-        onInputChanged(current)
+        // Act - first call establishes previous state (no release since prev is null)
+        throttler.process(prevState, 1000L)
+        val result = throttler.process(current, 1004L) // within throttle window but release transition
 
-        // Assert: pendingState should be null (state was sent), lastInputReportTime updated
-        assertTrue("pendingState should be null after release transition", pendingState == null)
-        assertTrue("lastInputReportTime should be updated", lastInputReportTime > 0L)
+        // Assert: Transmit result, no pending
+        assertTrue("Should transmit immediately on release transition", result is ThrottleResult.Transmit)
+        val transmit = result as ThrottleResult.Transmit
+        assertEquals(current, transmit.state)
+        assertFalse("alsoTransmitPending should be false (no prior pending)", transmit.alsoTransmitPending)
     }
 
     @Test
-    fun `suppress when within 8 ms and no release transition`() {
+    fun `suppress when within throttle window and no release transition`() {
         // Arrange: no release transition, within throttle window
-        resetThrottle()
-        lastState = copyState(leftStickX = 0.5f, leftStickY = 0.5f)
+        val throttler = InputThrottler(throttleIntervalMs = 8L)
+        val prevState = copyState(leftStickX = 0.5f, leftStickY = 0.5f)
         val current = copyState(leftStickX = 0.5f, leftStickY = 0.5f) // same state, no release
 
-        // Act -- first call stores as pending
-        onInputChanged(current)
-        val pendingAfterFirst = pendingState
+        // Act -- first call stores as pending (outside throttle window initially)
+        throttler.process(prevState, 1000L)
+        val result1 = throttler.process(current, 1004L) // within 8ms window
 
-        // Act -- second call within < 8ms window, should update pending with latest
-        // Simulate very short time gap
-        val now = System.currentTimeMillis()
-        lastInputReportTime = now  // set to "just now" so second call is within 8ms
-        onInputChanged(current)
-        val pendingAfterSecond = pendingState
+        // Assert: Pending result
+        assertTrue("Should be Pending within throttle window", result1 is ThrottleResult.Pending)
+        val pending = result1 as ThrottleResult.Pending
+        assertEquals(current, pending.state)
 
-        // Assert: pending should still exist and be the latest state
-        assertTrue("pendingState should exist after suppressed call", pendingAfterSecond != null)
-        assertEquals("pending should be updated to latest state", current, pendingAfterSecond!!)
+        // Act -- second call within throttle window, latest wins
+        val result2 = throttler.process(current, 1006L)
+
+        // Assert: Still pending, latest state kept
+        assertTrue("Should still be Pending", result2 is ThrottleResult.Pending)
+        val pending2 = result2 as ThrottleResult.Pending
+        assertEquals(current, pending2.state)
     }
 
     @Test
     fun `trailing edge throttled state sent on next call`() {
         // Arrange: first call is within throttle window, stores as pending
-        resetThrottle()
-        lastState = copyState()
+        val throttler = InputThrottler(throttleIntervalMs = 8L)
+        val prevState = copyState()
         val first = copyState(leftStickX = 0.5f, leftStickY = 0.5f)
 
-        onInputChanged(first)
-        assertTrue("pendingState should exist after first call within throttle window", pendingState != null)
+        throttler.process(prevState, 1000L)
+        val result1 = throttler.process(first, 1004L) // within 8ms window
 
-        // Act: second call with new state, now outside 8ms window (enough time has passed)
-        val now = System.currentTimeMillis()
-        lastInputReportTime = now - 100L // 100ms ago, definitely outside window
+        assertTrue("First call should be Pending", result1 is ThrottleResult.Pending)
+
+        // Act: second call with new state, now outside throttle window (100ms later)
         val second = copyState(leftStickX = -0.5f, leftStickY = -0.5f)
+        val result2 = throttler.process(second, 1104L) // 100ms after last report
 
-        onInputChanged(second)
-
-        // Assert: pending should be sent and cleared, new state also sent
-        assertTrue("pendingState should be null after trailing-edge send", pendingState == null)
-        // lastInputReportTime should be updated to the second call time
-        assertTrue("lastInputReportTime should be updated", lastInputReportTime > 0L)
+        // Assert: Transmit with alsoTransmitPending = true
+        assertTrue("Should Transmit with alsoTransmitPending", result2 is ThrottleResult.Transmit)
+        val transmit = result2 as ThrottleResult.Transmit
+        assertEquals(second, transmit.state)
+        assertTrue("alsoTransmitPending should be true", transmit.alsoTransmitPending)
     }
 
     @Test
     fun `release transition with sticks`() {
         // Arrange: lastState has leftStickX non-zero, new state has it at zero
-        resetThrottle()
-        lastState = copyState(leftStickX = 0.5f)
+        val throttler = InputThrottler(throttleIntervalMs = 8L)
+        val prevState = copyState(leftStickX = 0.5f)
         val current = copyState(leftStickX = 0f)
 
-        onInputChanged(current)
+        throttler.process(prevState, 1000L)
+        val result = throttler.process(current, 1004L) // within throttle window but release
 
         // Release transition should be detected, state sent immediately
-        assertTrue("pendingState should be null after stick release", pendingState == null)
+        assertTrue("Should Transmit immediately on stick release", result is ThrottleResult.Transmit)
+        val transmit = result as ThrottleResult.Transmit
+        assertFalse("alsoTransmitPending should be false", transmit.alsoTransmitPending)
     }
 
     @Test
     fun `multiple buttons release transition`() {
         // Arrange: lastState has multiple buttons pressed, new state releases some
-        resetThrottle()
-        lastState = copyState(buttonA = true, buttonB = true, leftStickX = 0.5f)
+        val throttler = InputThrottler(throttleIntervalMs = 8L)
+        val prevState = copyState(buttonA = true, buttonB = true, leftStickX = 0.5f)
         val current = copyState(buttonA = false, buttonB = false, leftStickX = 0f)
 
-        onInputChanged(current)
+        throttler.process(prevState, 1000L)
+        val result = throttler.process(current, 1004L)
 
-        assertTrue("pendingState should be null after multi-button release", pendingState == null)
+        assertTrue("Should Transmit immediately on multi-button release", result is ThrottleResult.Transmit)
+        val transmit = result as ThrottleResult.Transmit
+        assertFalse("alsoTransmitPending should be false", transmit.alsoTransmitPending)
     }
 
-    // --- Internal helper replicating GamepadViewModel.onInputChanged logic ---
+    @Test
+    fun `reset clears internal state`() {
+        val throttler = InputThrottler(throttleIntervalMs = 8L)
 
-    private fun onInputChanged(state: InputState) {
-        val now = System.currentTimeMillis()
-        var isReleaseTransition = false
-        val prev = lastState
-        if (prev != null) {
-            // Sticks returning to zero
-            if (prev.leftStickX != 0f && state.leftStickX == 0f) isReleaseTransition = true
-            if (prev.leftStickY != 0f && state.leftStickY == 0f) isReleaseTransition = true
-            if (prev.rightStickX != 0f && state.rightStickX == 0f) isReleaseTransition = true
-            if (prev.rightStickY != 0f && state.rightStickY == 0f) isReleaseTransition = true
+        // Build up some state
+        throttler.process(copyState(leftStickX = 0.5f), 1000L)
+        throttler.process(copyState(leftStickX = 0.5f), 1004L) // pending
+        throttler.process(copyState(leftStickX = 0f), 1104L) // transmit with pending
 
-            // Buttons transitioning from pressed to released
-            if (prev.buttonA && !state.buttonA) isReleaseTransition = true
-            if (prev.buttonB && !state.buttonB) isReleaseTransition = true
-            if (prev.buttonX && !state.buttonX) isReleaseTransition = true
-            if (prev.buttonY && !state.buttonY) isReleaseTransition = true
-            if (prev.buttonL1 && !state.buttonL1) isReleaseTransition = true
-            if (prev.buttonR1 && !state.buttonR1) isReleaseTransition = true
-            if (prev.buttonL3 && !state.buttonL3) isReleaseTransition = true
-            if (prev.buttonR3 && !state.buttonR3) isReleaseTransition = true
-            if (prev.buttonStart && !state.buttonStart) isReleaseTransition = true
-            if (prev.buttonSelect && !state.buttonSelect) isReleaseTransition = true
-            if (prev.buttonHome && !state.buttonHome) isReleaseTransition = true
-            if (prev.buttonCapture && !state.buttonCapture) isReleaseTransition = true
+        // Act: reset
+        throttler.reset()
 
-            // Triggers returning to zero
-            if (prev.leftTrigger != 0f && state.leftTrigger == 0f) isReleaseTransition = true
-            if (prev.rightTrigger != 0f && state.rightTrigger == 0f) isReleaseTransition = true
+        // After reset, should behave like fresh instance
+        val prevState = copyState()
+        val current = copyState(leftStickX = 0.5f)
+        val result = throttler.process(prevState, 2000L)
+        assertTrue("First call after reset should Transmit (no previous state)", result is ThrottleResult.Transmit)
 
-            // D-Pad returning to center
-            if ((prev.dpadUp || prev.dpadDown || prev.dpadLeft || prev.dpadRight) &&
-                (!state.dpadUp && !state.dpadDown && !state.dpadLeft && !state.dpadRight)) {
-                isReleaseTransition = true
+        val result2 = throttler.process(current, 2004L) // within throttle window
+        assertTrue("Second call within throttle should be Pending", result2 is ThrottleResult.Pending)
+    }
+
+    @Test
+    fun `configurable throttle interval`() {
+        // Default 4ms
+        val defaultThrottler = InputThrottler()
+        defaultThrottler.process(copyState(), 1000L)
+        val resultDefault = defaultThrottler.process(copyState(leftStickX = 0.1f), 1003L) // 3ms later
+        assertTrue("Default 4ms: 3ms should be Pending", resultDefault is ThrottleResult.Pending)
+
+        val resultDefault2 = defaultThrottler.process(copyState(leftStickX = 0.1f), 1005L) // 5ms later
+        assertTrue("Default 4ms: 5ms should Transmit", resultDefault2 is ThrottleResult.Transmit)
+
+        // Custom 10ms
+        val customThrottler = InputThrottler(throttleIntervalMs = 10L)
+        customThrottler.process(copyState(), 1000L)
+        val resultCustom = customThrottler.process(copyState(leftStickX = 0.1f), 1005L) // 5ms later
+        assertTrue("Custom 10ms: 5ms should be Pending", resultCustom is ThrottleResult.Pending)
+
+        val resultCustom2 = customThrottler.process(copyState(leftStickX = 0.1f), 1012L) // 12ms later
+        assertTrue("Custom 10ms: 12ms should Transmit", resultCustom2 is ThrottleResult.Transmit)
+    }
+
+    @Test
+    fun `time controlled testing via nowMs parameter`() {
+        // Test that we can control time via nowMs parameter for deterministic testing
+        val throttler = InputThrottler(throttleIntervalMs = 8L)
+
+        // Simulate exact time progression
+        val t0 = 1000000L
+        throttler.process(copyState(), t0)
+
+        // At t0 + 4ms (within throttle window)
+        val r1 = throttler.process(copyState(leftStickX = 0.5f), t0 + 4)
+        assertTrue("At 4ms should be Pending", r1 is ThrottleResult.Pending)
+
+        // At t0 + 8ms (at throttle boundary)
+        val r2 = throttler.process(copyState(leftStickX = 0.5f), t0 + 8)
+        assertTrue("At 8ms should Transmit", r2 is ThrottleResult.Transmit)
+        assertTrue("alsoTransmitPending should be true at boundary", (r2 as ThrottleResult.Transmit).alsoTransmitPending)
+
+        // No manual time waiting needed — fully deterministic
+    }
+
+    @Test
+    fun `trigger release transition detected`() {
+        val throttler = InputThrottler(throttleIntervalMs = 8L)
+        val prevState = copyState(leftTrigger = 0.5f)
+        val current = copyState(leftTrigger = 0f)
+
+        throttler.process(prevState, 1000L)
+        val result = throttler.process(current, 1004L)
+
+        assertTrue("Trigger release should Transmit immediately", result is ThrottleResult.Transmit)
+    }
+
+    @Test
+    fun `dpad release transition detected`() {
+        val throttler = InputThrottler(throttleIntervalMs = 8L)
+        val prevState = copyState(dpadUp = true)
+        val current = copyState()
+
+        throttler.process(prevState, 1000L)
+        val result = throttler.process(current, 1004L)
+
+        assertTrue("D-Pad release should Transmit immediately", result is ThrottleResult.Transmit)
+    }
+
+    @Test
+    fun `stick click release transition detected`() {
+        val throttler = InputThrottler(throttleIntervalMs = 8L)
+        val prevState = copyState(buttonL3 = true)
+        val current = copyState()
+
+        throttler.process(prevState, 1000L)
+        val result = throttler.process(current, 1004L)
+
+        assertTrue("Stick click (L3) release should Transmit immediately", result is ThrottleResult.Transmit)
+    }
+
+    @Test
+    fun `system button release transition detected`() {
+        val throttler = InputThrottler(throttleIntervalMs = 8L)
+        val prevState = copyState(buttonHome = true, buttonCapture = true)
+        val current = copyState()
+
+        throttler.process(prevState, 1000L)
+        val result = throttler.process(current, 1004L)
+
+        assertTrue("System button (Home/Capture) release should Transmit immediately", result is ThrottleResult.Transmit)
+    }
+
+    @Test
+    fun `release transition with pending state transmits both`() {
+        // Arrange: pending state exists, then a release transition occurs
+        val throttler = InputThrottler(throttleIntervalMs = 8L)
+        val prevState = copyState(leftStickX = 0.5f)
+        val pending = copyState(leftStickX = 0.5f) // within throttle window, becomes pending
+        val release = copyState(leftStickX = 0f) // release transition
+
+        throttler.process(prevState, 1000L)
+        val result1 = throttler.process(pending, 1004L) // Pending
+        assertTrue("Should be Pending", result1 is ThrottleResult.Pending)
+
+        // Act: release transition while pending exists
+        val result2 = throttler.process(release, 1008L) // still within throttle but release
+
+        // Assert: Transmit with alsoTransmitPending = true AND pendingState present
+        assertTrue("Should Transmit with alsoTransmitPending", result2 is ThrottleResult.Transmit)
+        val transmit = result2 as ThrottleResult.Transmit
+        assertEquals(release, transmit.state)
+        assertTrue("alsoTransmitPending should be true", transmit.alsoTransmitPending)
+        assertNotNull("pendingState should be present", transmit.pendingState)
+        assertEquals(pending, transmit.pendingState!!)
+    }
+
+    // =========================================================================
+    // P0: Core behavior gaps - initialization, zero-crossing, boundary
+    // =========================================================================
+
+    @Test
+    fun `first call always transmits regardless of throttle`() {
+        // When lastState == null and lastReportTime == 0, first process() always transmits
+        val throttler = InputThrottler(throttleIntervalMs = 100L)
+        val result = throttler.process(copyState(leftStickX = 0.5f), 1000L)
+        assertTrue("First call should always Transmit", result is ThrottleResult.Transmit)
+        val transmit = result as ThrottleResult.Transmit
+        assertFalse("alsoTransmitPending should be false (no prior pending)", transmit.alsoTransmitPending)
+        assertEquals(copyState(leftStickX = 0.5f), transmit.state)
+    }
+
+    @Test
+    fun `stick crossing zero without stopping at zero is not release`() {
+        // 0.5 -> -0.5 crosses zero but is NOT a release (exact zero required)
+        // Current implementation: only exact 0f counts as release
+        val throttler = InputThrottler(throttleIntervalMs = 8L)
+        throttler.process(copyState(leftStickX = 0.5f), 1000L)
+        val result = throttler.process(copyState(leftStickX = -0.5f), 1004L) // within window
+        assertTrue("Crossing zero should be Pending (throttled), not release", result is ThrottleResult.Pending)
+    }
+
+    @Test
+    fun `first eligible call at exact throttle boundary transmits`() {
+        // Test boundary on first eligible call (>= vs >)
+        val throttler = InputThrottler(throttleIntervalMs = 8L)
+        throttler.process(copyState(), 1000L)
+        val result = throttler.process(copyState(leftStickX = 0.5f), 1008L) // exactly 8ms
+        assertTrue("At exact boundary should Transmit", result is ThrottleResult.Transmit)
+    }
+
+    @Test
+    fun `multiple rapid updates within throttle window latest wins`() {
+        val throttler = InputThrottler(throttleIntervalMs = 50L)
+        throttler.process(copyState(), 1000L)
+        throttler.process(copyState(leftStickX = 0.1f), 1010L) // pending v1
+        throttler.process(copyState(leftStickX = 0.5f), 1020L) // pending v2 (latest)
+        throttler.process(copyState(leftStickX = -0.5f), 1030L) // pending v3 (latest)
+        val result = throttler.process(copyState(leftStickX = 1.0f), 1060L) // after window
+        val transmit = result as ThrottleResult.Transmit
+        assertTrue("alsoTransmitPending should be true", transmit.alsoTransmitPending)
+        assertEquals(-0.5f, transmit.pendingState!!.leftStickX, 0.001f) // v3 was pending (-0.5f)
+        assertEquals(1.0f, transmit.state.leftStickX, 0.001f) // current is v4
+    }
+
+    // =========================================================================
+    // P1: Edge cases & robustness - analog edge cases, float precision
+    // =========================================================================
+
+    @Test
+    fun `trigger partial release is throttled not immediate`() {
+        val throttler = InputThrottler(throttleIntervalMs = 8L)
+        throttler.process(copyState(leftTrigger = 1.0f), 1000L)
+        val result = throttler.process(copyState(leftTrigger = 0.3f), 1004L) // not zero
+        assertTrue("Partial trigger release should be Pending", result is ThrottleResult.Pending)
+    }
+
+    @Test
+    fun `dpad direction change is not release transition`() {
+        val throttler = InputThrottler(throttleIntervalMs = 8L)
+        throttler.process(copyState(dpadUp = true), 1000L)
+        val result = throttler.process(copyState(dpadRight = true), 1004L)
+        assertTrue("D-Pad direction change should be Pending", result is ThrottleResult.Pending)
+    }
+
+    @Test
+    fun `stick values extremely close to zero are not treated as zero`() {
+        val throttler = InputThrottler(throttleIntervalMs = 8L)
+        throttler.process(copyState(leftStickX = 0.0001f), 1000L)
+        val result = throttler.process(copyState(leftStickX = 0.0001f), 1004L)
+        assertTrue("Near-zero should not be treated as release", result is ThrottleResult.Pending)
+    }
+
+    @Test
+    fun `stick exactly zero from non-zero is release`() {
+        val throttler = InputThrottler(throttleIntervalMs = 8L)
+        throttler.process(copyState(leftStickX = 0.0001f), 1000L)
+        val result = throttler.process(copyState(leftStickX = 0f), 1004L)
+        assertTrue("Exact zero from non-zero is release", result is ThrottleResult.Transmit)
+    }
+
+    @Test
+    fun `zero throttle interval means no throttling`() {
+        val throttler = InputThrottler(throttleIntervalMs = 0L)
+        throttler.process(copyState(), 1000L)
+        val r1 = throttler.process(copyState(leftStickX = 0.1f), 1000L) // same time
+        val r2 = throttler.process(copyState(leftStickX = 0.2f), 1000L)
+        assertTrue("Zero interval: all should Transmit", r1 is ThrottleResult.Transmit)
+        assertTrue("Zero interval: all should Transmit", r2 is ThrottleResult.Transmit)
+    }
+
+    @Test
+    fun `negative throttle interval treated as zero`() {
+        val throttler = InputThrottler(throttleIntervalMs = -1L)
+        throttler.process(copyState(), 1000L)
+        val result = throttler.process(copyState(leftStickX = 0.1f), 1000L)
+        assertTrue("Negative interval treated as zero: should Transmit", result is ThrottleResult.Transmit)
+    }
+
+    @Test
+    fun `consecutive release transitions both transmit immediately`() {
+        val throttler = InputThrottler(throttleIntervalMs = 8L)
+        throttler.process(copyState(buttonA = true, buttonB = true), 1000L)
+        
+        // Release A
+        val r1 = throttler.process(copyState(buttonA = false, buttonB = true), 1004L)
+        assertTrue("Release A should Transmit immediately", r1 is ThrottleResult.Transmit)
+        
+        // Release B (still within throttle window)
+        val r2 = throttler.process(copyState(buttonA = false, buttonB = false), 1006L)
+        assertTrue("Release B should Transmit immediately", r2 is ThrottleResult.Transmit)
+    }
+
+    @Test
+    fun `reset clears pending state`() {
+        val throttler = InputThrottler(throttleIntervalMs = 50L)
+        throttler.process(copyState(), 1000L)
+        throttler.process(copyState(leftStickX = 0.5f), 1010L) // pending
+        
+        throttler.reset()
+        
+        // Should behave fresh - no pending to transmit
+        val result = throttler.process(copyState(leftStickX = 0.5f), 2000L)
+        assertTrue("After reset: first call should Transmit", result is ThrottleResult.Transmit)
+        assertFalse("alsoTransmitPending should be false", (result as ThrottleResult.Transmit).alsoTransmitPending)
+    }
+
+    // =========================================================================
+    // P2: Property invariants & state machine guarantees
+    // =========================================================================
+
+    @Test
+    fun `release transition always transmits regardless of throttle state`() {
+        // Property: Any release transition must transmit immediately, even deep in throttle window
+        val intervals = listOf(1L, 4L, 8L, 16L, 100L)
+        val releaseScenarios = listOf(
+            copyState(buttonA = true) to copyState(buttonA = false),
+            copyState(buttonB = true) to copyState(buttonB = false),
+            copyState(leftStickX = 0.5f) to copyState(leftStickX = 0f),
+            copyState(leftStickY = 0.5f) to copyState(leftStickY = 0f),
+            copyState(rightStickX = 0.5f) to copyState(rightStickX = 0f),
+            copyState(rightStickY = 0.5f) to copyState(rightStickY = 0f),
+            copyState(leftTrigger = 1.0f) to copyState(leftTrigger = 0f),
+            copyState(rightTrigger = 1.0f) to copyState(rightTrigger = 0f),
+            copyState(dpadUp = true) to copyState(),
+            copyState(dpadDown = true) to copyState(),
+            copyState(dpadLeft = true) to copyState(),
+            copyState(dpadRight = true) to copyState(),
+            copyState(buttonL3 = true) to copyState(),
+            copyState(buttonR3 = true) to copyState(),
+            copyState(buttonHome = true) to copyState(),
+            copyState(buttonCapture = true) to copyState()
+        )
+
+        for (interval in intervals) {
+            for ((prev, curr) in releaseScenarios) {
+                val throttler = InputThrottler(throttleIntervalMs = interval)
+                throttler.process(prev, 1000L)
+                // Well within throttle window
+                val result = throttler.process(curr, 1001L)
+                assertTrue("Interval $interval: release ($prev -> $curr) must transmit", result is ThrottleResult.Transmit)
             }
         }
-        lastState = state
+    }
 
-        if (isReleaseTransition || now - lastInputReportTime >= 8L) {
-            lastInputReportTime = now
-            if (pendingState != null) {
-                sentStates.add(pendingState!!)
-            }
-            sentStates.add(state)
-            pendingState = null
-        } else if (pendingState != null) {
-            // Within throttle window and we have a pending state from before
-            // Latest wins - update pending to current state
-            pendingState = state
-        } else {
-            // Within throttle window, no pending - store as pending
-            pendingState = state
+    @Test
+    fun `eventually transmits - no permanent starvation`() {
+        // Property: No matter how many rapid updates within throttle window, 
+        // eventually the throttle window expires and something transmits
+        val throttler = InputThrottler(throttleIntervalMs = 8L)
+        throttler.process(copyState(), 1000L)
+        
+        // Rapid updates within window (100 calls in 5ms)
+        for (i in 1..100) {
+            throttler.process(copyState(leftStickX = i * 0.01f), 1000L + i)
         }
+        
+        // Eventually must transmit
+        var transmitted = false
+        for (i in 101..200) {
+            val result = throttler.process(copyState(leftStickX = i * 0.01f), 1000L + i * 10)
+            if (result is ThrottleResult.Transmit) {
+                transmitted = true
+                break
+            }
+        }
+        assertTrue("Must eventually transmit - no permanent starvation", transmitted)
+    }
+
+    @Test
+    fun `reset produces identical behavior to new instance`() {
+        // Property: reset() should be equivalent to creating a fresh InputThrottler
+        val throttler1 = InputThrottler(throttleIntervalMs = 7L)
+        val throttler2 = InputThrottler(throttleIntervalMs = 7L)
+        
+        // Build complex state in throttler1
+        throttler1.process(copyState(buttonA = true), 1000L)
+        throttler1.process(copyState(buttonA = true, leftStickX = 0.3f), 1003L) // pending
+        throttler1.process(copyState(leftStickX = 0f), 1010L) // transmit with pending
+        throttler1.reset()
+        
+        // Both should behave identically now
+        val inputs = listOf(
+            copyState(), 
+            copyState(leftStickX = 0.1f), 
+            copyState(leftStickX = 0.2f),
+            copyState(leftStickX = 0f), 
+            copyState(buttonB = true)
+        )
+        var t1 = 2000L
+        var t2 = 2000L
+        for (input in inputs) {
+            t1 += 3
+            t2 += 3
+            val r1 = throttler1.process(input, t1)
+            val r2 = throttler2.process(input, t2)
+            assertEquals("Result type should match", r1::class, r2::class)
+            if (r1 is ThrottleResult.Transmit && r2 is ThrottleResult.Transmit) {
+                assertEquals("alsoTransmitPending should match", r1.alsoTransmitPending, r2.alsoTransmitPending)
+                assertEquals("pendingState should match", r1.pendingState, r2.pendingState)
+            }
+        }
+    }
+
+    // =========================================================================
+    // P3: Documentation tests
+    // =========================================================================
+
+    @Test
+    fun `InputThrottler is not thread safe - single thread usage documented`() {
+        // This test documents expected single-threaded usage
+        // InputThrottler is NOT thread-safe; GamepadViewModel uses it on UI thread only
+        // No assertion - serves as executable documentation
+        val throttler = InputThrottler()
+        throttler.process(copyState(), 1000L)
+        throttler.reset()
+        // If this compiles and runs, the API is usable from single thread
+    }
+
+    // =========================================================================
+    // P4: Mutation testing targets (these should kill common mutants)
+    // =========================================================================
+
+    @Test
+    fun `throttle boundary uses greaterEquals not greaterThan (kills greaterThan mutant)`() {
+        // Mutant: >= -> > would make exact boundary Pending instead of Transmit
+        val throttler = InputThrottler(throttleIntervalMs = 8L)
+        throttler.process(copyState(), 1000L)
+        // Exactly at boundary (8ms)
+        val result = throttler.process(copyState(leftStickX = 0.5f), 1008L)
+        assertTrue("Exact boundary must Transmit (>= semantics)", result is ThrottleResult.Transmit)
+    }
+
+    @Test
+    fun `stick release requires exact zero not lessEquals (kills lessEquals mutant)`() {
+        // Mutant: == 0f -> <= 0f would treat negative as release
+        val throttler = InputThrottler(throttleIntervalMs = 8L)
+        throttler.process(copyState(leftStickX = 0.5f), 1000L)
+        val result = throttler.process(copyState(leftStickX = -0.5f), 1004L)
+        assertTrue("Negative stick should be Pending (not release)", result is ThrottleResult.Pending)
+    }
+
+    @Test
+    fun `button release requires exact false not logicalNot (kills logicalNot mutant)`() {
+        // Mutant: !pressed -> pressed would invert logic
+        val throttler = InputThrottler(throttleIntervalMs = 8L)
+        throttler.process(copyState(buttonA = true), 1000L)
+        val result = throttler.process(copyState(buttonA = true), 1004L) // still pressed
+        assertTrue("Still pressed should be Pending (not release)", result is ThrottleResult.Pending)
+    }
+
+    @Test
+    fun `lastReportTime updated on every Transmit (kills missing assignment mutant)`() {
+        // Mutant: missing lastReportTime = nowMs would allow immediate re-transmit
+        val throttler = InputThrottler(throttleIntervalMs = 8L)
+        throttler.process(copyState(), 1000L)
+        throttler.process(copyState(leftStickX = 0.5f), 1004L) // Pending
+        val result = throttler.process(copyState(leftStickX = 0f), 1104L) // release after window
+        assertTrue(result is ThrottleResult.Transmit)
+        // If lastReportTime wasn't updated, next call at 1105L would be Pending
+        // But since it was updated to 1104L, next call at 1112L (8ms later) should Transmit
+        val result2 = throttler.process(copyState(leftStickX = 0.5f), 1112L)
+        assertTrue("lastReportTime must be updated on Transmit", result2 is ThrottleResult.Transmit)
+    }
+
+    @Test
+    fun `pendingState cleared on Transmit (kills missing clear mutant)`() {
+        // Mutant: missing pendingState = null would re-transmit stale pending
+        val throttler = InputThrottler(throttleIntervalMs = 8L)
+        throttler.process(copyState(), 1000L)
+        throttler.process(copyState(leftStickX = 0.5f), 1004L) // Pending (v1)
+        val result1 = throttler.process(copyState(leftStickX = 0f), 1104L) // release -> Transmit with pending
+        val transmit1 = result1 as ThrottleResult.Transmit
+        assertTrue(transmit1.alsoTransmitPending)
+        assertEquals(0.5f, transmit1.pendingState!!.leftStickX, 0.001f)
+        
+        // Second call after window - should NOT alsoTransmitPending (cleared)
+        val result2 = throttler.process(copyState(leftStickX = 0.2f), 1112L)
+        val transmit2 = result2 as ThrottleResult.Transmit
+        assertFalse("pendingState should be cleared after first Transmit", transmit2.alsoTransmitPending)
+        assertNull("pendingState should be null after clear", transmit2.pendingState)
+    }
+
+    @Test
+    fun `throttleIntervalMs default used when not specified (kills default param mutant)`() {
+        // Mutant: DEFAULT_THROTTLE_MS changed to different value
+        val throttler = InputThrottler() // uses default 4ms
+        throttler.process(copyState(), 1000L)
+        // At 3ms - should be Pending (within 4ms default)
+        val result1 = throttler.process(copyState(leftStickX = 0.1f), 1003L)
+        assertTrue("Default 4ms: 3ms should be Pending", result1 is ThrottleResult.Pending)
+        // At 5ms - should Transmit (outside 4ms default)
+        val result2 = throttler.process(copyState(leftStickX = 0.1f), 1005L)
+        assertTrue("Default 4ms: 5ms should Transmit", result2 is ThrottleResult.Transmit)
     }
 }

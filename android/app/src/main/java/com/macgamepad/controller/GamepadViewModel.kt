@@ -18,9 +18,14 @@ import android.Manifest
 import com.macgamepad.controller.bt.BluetoothGamepadService
 import com.macgamepad.controller.bt.GamepadService
 import com.macgamepad.controller.input.InputState
+import com.macgamepad.controller.input.InputThrottler
+import com.macgamepad.controller.input.ThrottleResult
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.delay
+import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.launch
 import androidx.compose.ui.geometry.Offset
 
 /**
@@ -39,6 +44,9 @@ class GamepadViewModel(application: Application) : AndroidViewModel(application)
     }
 
     private val prefs = application.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+
+    // Store Activity context for permission rationale checks (set from lifecycle observer)
+    private var activityContext: androidx.activity.ComponentActivity? = null
 
     // ================================================================
     // Layout pref key helpers — NAMESPACED BY PROFILE so each profile
@@ -149,6 +157,8 @@ class GamepadViewModel(application: Application) : AndroidViewModel(application)
         fun requestDiscoverability()
         fun requestNotificationPermission()
         fun requestBluetoothEnable()
+        fun bindGamepadService()
+        fun onDiscoverabilityScreenAllow()
     }
 
     // Tracks initialization sequence state
@@ -159,7 +169,9 @@ class GamepadViewModel(application: Application) : AndroidViewModel(application)
         object Idle : InitializationState
         data class RequestingPermissions(val missingPermissions: List<String>) : InitializationState
         object RequestingBluetoothEnable : InitializationState
+        object ShowingDiscoverabilityScreen : InitializationState
         object RequestingDiscoverability : InitializationState
+        object Completed : InitializationState
         data class Error(val message: String) : InitializationState
     }
 
@@ -176,7 +188,11 @@ class GamepadViewModel(application: Application) : AndroidViewModel(application)
                 if (!hasDoneInitialPermissionCheck) {
                     hasDoneInitialPermissionCheck = true
                 }
-                checkAndUpdatePermissionState(getApplication())
+                // owner is the Activity, store it for proper rationale checks
+                if (owner is androidx.activity.ComponentActivity) {
+                    activityContext = owner
+                }
+                checkAndUpdatePermissionState(owner as Context)
             }
         })
     }
@@ -240,11 +256,25 @@ class GamepadViewModel(application: Application) : AndroidViewModel(application)
     // Public API
     // ================================================================
 
+    private var isInitializingBluetooth = false
+
     fun initializeBluetooth() {
+        // Guard against double initialization
+        if (isInitializingBluetooth) {
+            Log.w(TAG, "initializeBluetooth called while already initializing, skipping")
+            return
+        }
         val service = _gamepadService.value
         if (service != null) {
+            isInitializingBluetooth = true
             updateTargetDeviceName()
             service.startSession()
+            // Reset flag after session starts (HID registration is async)
+            // We'll reset when connection state changes or after timeout
+            viewModelScope.launch {
+                delay(3000)
+                isInitializingBluetooth = false
+            }
         } else {
             Log.w(TAG, "Cannot initialize BT, service is null")
         }
@@ -440,49 +470,23 @@ class GamepadViewModel(application: Application) : AndroidViewModel(application)
         return map
     }
 
-    // Throttle input reports to ~120 Hz (8ms min interval) to prevent BT queue buildup
-    private var lastInputReportTime = 0L
-    private var lastState: InputState? = null
+    // Throttle input reports to prevent BT queue buildup (default 4ms ≈ 250 Hz)
+    private val inputThrottler = InputThrottler()
 
     fun onInputChanged(state: InputState) {
-        val now = System.currentTimeMillis()
-        var isReleaseTransition = false
-        val prev = lastState
-        if (prev != null) {
-            // Sticks returning to zero
-            if (prev.leftStickX != 0f && state.leftStickX == 0f) isReleaseTransition = true
-            if (prev.leftStickY != 0f && state.leftStickY == 0f) isReleaseTransition = true
-            if (prev.rightStickX != 0f && state.rightStickX == 0f) isReleaseTransition = true
-            if (prev.rightStickY != 0f && state.rightStickY == 0f) isReleaseTransition = true
-            
-            // Buttons transitioning from pressed to released
-            if (prev.buttonA && !state.buttonA) isReleaseTransition = true
-            if (prev.buttonB && !state.buttonB) isReleaseTransition = true
-            if (prev.buttonX && !state.buttonX) isReleaseTransition = true
-            if (prev.buttonY && !state.buttonY) isReleaseTransition = true
-            if (prev.buttonL1 && !state.buttonL1) isReleaseTransition = true
-            if (prev.buttonR1 && !state.buttonR1) isReleaseTransition = true
-            if (prev.buttonL3 && !state.buttonL3) isReleaseTransition = true
-            if (prev.buttonR3 && !state.buttonR3) isReleaseTransition = true
-            if (prev.buttonStart && !state.buttonStart) isReleaseTransition = true
-            if (prev.buttonSelect && !state.buttonSelect) isReleaseTransition = true
-            if (prev.buttonHome && !state.buttonHome) isReleaseTransition = true
-            
-            // Triggers returning to zero
-            if (prev.leftTrigger != 0f && state.leftTrigger == 0f) isReleaseTransition = true
-            if (prev.rightTrigger != 0f && state.rightTrigger == 0f) isReleaseTransition = true
-            
-            // D-Pad returning to center
-            if ((prev.dpadUp || prev.dpadDown || prev.dpadLeft || prev.dpadRight) &&
-                (!state.dpadUp && !state.dpadDown && !state.dpadLeft && !state.dpadRight)) {
-                isReleaseTransition = true
+        val result = inputThrottler.process(state)
+        when (result) {
+            is ThrottleResult.Transmit -> {
+                // Transmit pending state first (trailing-edge delivery)
+                result.pendingState?.let {
+                    _gamepadService.value?.updateInputState(it)
+                }
+                // Then transmit current state
+                _gamepadService.value?.updateInputState(result.state)
             }
-        }
-        lastState = state
-
-        if (isReleaseTransition || now - lastInputReportTime >= 4L) {
-            lastInputReportTime = now
-            _gamepadService.value?.updateInputState(state)
+            is ThrottleResult.Pending -> {
+                // State held as pending, do nothing
+            }
         }
     }
 
@@ -516,8 +520,12 @@ class GamepadViewModel(application: Application) : AndroidViewModel(application)
             val granted = ContextCompat.checkSelfPermission(context, perm) == PackageManager.PERMISSION_GRANTED
             if (!granted) {
                 missingPermissions.add(perm)
-                val rationale = androidx.core.app.ActivityCompat.shouldShowRequestPermissionRationale(
-                    context as androidx.activity.ComponentActivity, perm)
+                // Only check rationale if context is an Activity
+                val rationale = if (context is androidx.activity.ComponentActivity) {
+                    androidx.core.app.ActivityCompat.shouldShowRequestPermissionRationale(context, perm)
+                } else {
+                    false // Can't check rationale without Activity
+                }
                 if (rationale) {
                     anyRationale = true
                 } else if (hasEverRequestedBluetoothPermissions) {
@@ -547,14 +555,27 @@ class GamepadViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun onDiscoverabilityResult(resultCode: Int) {
-        // Both RESULT_OK and RESULT_CANCELED (timeout/denial) proceed to HID init
-        Log.i(TAG, "Discoverability result: $resultCode, proceeding to HID initialization")
-        initializeBluetooth()
+        // On some devices, discoverability returns the duration (e.g., 300) as success code
+        // RESULT_OK is -1, but positive values also indicate success (duration in seconds)
+        val isSuccess = resultCode == android.app.Activity.RESULT_OK || resultCode > 0
+        if (isSuccess) {
+            Log.i(TAG, "Discoverability granted (resultCode=$resultCode), proceeding to HID initialization")
+            _initializationState.value = InitializationState.Completed
+            initializeBluetooth()
+        } else {
+            // User cancelled discoverability - show error, don't proceed
+            Log.w(TAG, "Discoverability cancelled/denied: $resultCode")
+            _initializationState.value = InitializationState.Error("Discoverability is required to connect. Please retry.")
+        }
     }
 
     fun onDiscoverabilitySkipped() {
         Log.i(TAG, "Discoverability skipped, proceeding to HID initialization")
-        initializeBluetooth()
+        _initializationState.value = InitializationState.Completed
+        // Only initialize if not already initializing
+        if (!isInitializingBluetooth) {
+            initializeBluetooth()
+        }
     }
 
     fun openAppSettings() {
@@ -568,7 +589,15 @@ class GamepadViewModel(application: Application) : AndroidViewModel(application)
 
     // Public method for UI to trigger permission re-check
     fun recheckPermissions() {
-        checkAndUpdatePermissionState(getApplication() as Context)
+        // Need an Activity context for rationale checks - use lifecycle owner
+        val context = getApplication() as Context
+        // This will use the Activity when called from onResume, otherwise just check grants
+        checkAndUpdatePermissionState(context)
+    }
+
+    // Public method to reset initialization state (e.g., on back press from discoverability screen)
+    fun resetInitialization() {
+        _initializationState.value = InitializationState.Idle
     }
 
     // Bluetooth enable prompt (used by initialization flow)
@@ -578,8 +607,17 @@ class GamepadViewModel(application: Application) : AndroidViewModel(application)
 
     // Integrated initialization flow: permissions → BT enable → discoverable → HID
     fun startInitialization() {
-        val context = getApplication<Application>() as Context
-        val currentPermissionState = checkBluetoothPermissions(context)
+        // Guard against rapid re-taps
+        if (_initializationState.value != InitializationState.Idle && 
+            _initializationState.value !is InitializationState.Error) {
+            return
+        }
+        
+        // Use stored Activity context for permission rationale checks, fallback to Application
+        val context = activityContext ?: getApplication<Application>() as Context
+        // First update the permissionState flow that UI observes
+        checkAndUpdatePermissionState(context)
+        val currentPermissionState = _permissionState.value
         
         when (currentPermissionState) {
             is PermissionStatus.Unknown, is PermissionStatus.Denied -> {
@@ -608,9 +646,9 @@ class GamepadViewModel(application: Application) : AndroidViewModel(application)
         val adapter = bluetoothManager.adapter
         
         if (adapter?.isEnabled == true) {
-            // Bluetooth is on, request discoverability
-            _initializationState.value = InitializationState.RequestingDiscoverability
-            requestDiscoverability()
+            // Bluetooth is on, show custom discoverability screen first
+            _initializationState.value = InitializationState.ShowingDiscoverabilityScreen
+            permissionCallback?.bindGamepadService()
         } else {
             // Need to enable Bluetooth first
             _initializationState.value = InitializationState.RequestingBluetoothEnable
@@ -629,8 +667,12 @@ class GamepadViewModel(application: Application) : AndroidViewModel(application)
         for ((perm, granted) in results) {
             if (!granted && perm in bluetoothPermissions) {
                 missingAfterRequest.add(perm)
-                val rationale = androidx.core.app.ActivityCompat.shouldShowRequestPermissionRationale(
-                    context as androidx.activity.ComponentActivity, perm)
+                // Only check rationale if context is an Activity
+                val rationale = if (context is androidx.activity.ComponentActivity) {
+                    androidx.core.app.ActivityCompat.shouldShowRequestPermissionRationale(context, perm)
+                } else {
+                    false
+                }
                 if (rationale) {
                     anyRationale = true
                 } else if (hasEverRequestedBluetoothPermissions) {
@@ -657,13 +699,19 @@ class GamepadViewModel(application: Application) : AndroidViewModel(application)
     // Called from MainActivity after Bluetooth enable result
     fun onBluetoothEnableResult(resultCode: Int) {
         if (resultCode == android.app.Activity.RESULT_OK) {
-            // Bluetooth enabled, now request discoverability
-            _initializationState.value = InitializationState.RequestingDiscoverability
-            requestDiscoverability()
+            // Bluetooth enabled, show custom discoverability screen
+            _initializationState.value = InitializationState.ShowingDiscoverabilityScreen
+            permissionCallback?.bindGamepadService()
         } else {
             // User denied Bluetooth enable
             _initializationState.value = InitializationState.Error("Bluetooth must be enabled to continue.")
         }
+    }
+
+    // Called from MainActivity when user clicks "Allow Discoverability" on custom screen
+    fun onDiscoverabilityScreenAllow() {
+        _initializationState.value = InitializationState.RequestingDiscoverability
+        requestDiscoverability()
     }
 
     // ================================================================
