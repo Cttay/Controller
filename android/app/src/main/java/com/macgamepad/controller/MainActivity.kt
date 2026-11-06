@@ -1,9 +1,11 @@
 package com.macgamepad.controller
 
 import android.Manifest
+import android.content.BroadcastReceiver
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.ServiceConnection
 import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
@@ -14,10 +16,12 @@ import android.util.Log
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.*
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.core.content.ContextCompat
@@ -28,6 +32,7 @@ import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.macgamepad.controller.bt.BluetoothGamepadService
 import com.macgamepad.controller.bt.GamepadService
+import kotlinx.coroutines.flow.first
 import com.macgamepad.controller.ui.screens.ConnectionScreen
 import com.macgamepad.controller.ui.screens.DashboardScreen
 import com.macgamepad.controller.ui.screens.GamepadScreen
@@ -86,9 +91,41 @@ class MainActivity : ComponentActivity(), GamepadViewModel.PermissionCallback {
         }
     }
 
+    // Bluetooth state broadcast receiver for mid-game BT off detection
+    private val bluetoothStateReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            val action = intent?.action
+            if (action == android.bluetooth.BluetoothAdapter.ACTION_STATE_CHANGED) {
+                val state = intent.getIntExtra(android.bluetooth.BluetoothAdapter.EXTRA_STATE, -1)
+                when (state) {
+                    android.bluetooth.BluetoothAdapter.STATE_TURNING_OFF,
+                    android.bluetooth.BluetoothAdapter.STATE_OFF -> {
+                        Log.w(TAG, "Bluetooth turned off - forcing UI back to Connection screen")
+                        // If we're in GAMEPAD screen, force back to Connection screen with BluetoothEnableScreen
+                        val vm = viewModelRef
+                        if (vm != null && vm.currentScreen.value == GamepadViewModel.Screen.GAMEPAD) {
+                            // The GamepadScreen will handle this by observing connectionState
+                            // but we can also force a navigation if needed
+                            vm.updateServiceStates(
+                                BluetoothGamepadService.ConnectionState.ERROR,
+                                null,
+                                "Bluetooth was turned off"
+                            )
+                        }
+                    }
+                    android.bluetooth.BluetoothAdapter.STATE_ON -> {
+                        Log.i(TAG, "Bluetooth turned back on")
+                    }
+                }
+            }
+        }
+    }
+
     private fun startStateCollection(srv: GamepadService, vm: GamepadViewModel) {
         stopStateCollection()
+        // Wait for btServiceReady signal (set after btService.initialize() in startSession)
         serviceCollectorJob = lifecycleScope.launch {
+            srv.btServiceReady.first { it }  // Suspend until btService is initialized
             launch {
                 srv.btService.connectionState.collectLatest { state ->
                     vm.updateServiceStates(state, srv.btService.connectedDeviceName.value, srv.btService.errorMessage.value)
@@ -114,12 +151,19 @@ class MainActivity : ComponentActivity(), GamepadViewModel.PermissionCallback {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        enableEdgeToEdge()
 
         // Immersive mode configuration
         WindowCompat.setDecorFitsSystemWindows(window, false)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        
+        // Register Bluetooth state broadcast receiver
+        registerReceiver(
+            bluetoothStateReceiver,
+            IntentFilter(android.bluetooth.BluetoothAdapter.ACTION_STATE_CHANGED),
+            Context.RECEIVER_NOT_EXPORTED
+        )
 
-        // No auto permission check or service binding on launch
         setContent {
             MacGamepadTheme {
                 val vm: GamepadViewModel = viewModel()
@@ -137,14 +181,6 @@ class MainActivity : ComponentActivity(), GamepadViewModel.PermissionCallback {
                 val errorMessage by vm.errorMessage.collectAsState()
                 val activeProfileId by vm.activeProfileId.collectAsState()
                 val mode by vm.mode.collectAsState()
-
-                // Bind to service when permissions are granted
-                val permissionState by vm.permissionState.collectAsState()
-                LaunchedEffect(permissionState) {
-                    if (permissionState is GamepadViewModel.PermissionStatus.Granted && !isBound && gamepadService == null) {
-                        bindToService()
-                    }
-                }
 
                 // Immersive landscape vs Portrait control matching
                 LaunchedEffect(currentScreen) {
@@ -212,7 +248,7 @@ class MainActivity : ComponentActivity(), GamepadViewModel.PermissionCallback {
                                 onDisconnect = { vm.disconnect() },
                                 onNavigateToProfile = { vm.navigateToProfile() },
                                 onNavigateToSettings = { vm.navigateToSettings() },
-                                modifier = Modifier.fillMaxSize()
+                                modifier = Modifier.fillMaxSize().navigationBarsPadding()
                             )
                         }
 
@@ -252,7 +288,7 @@ class MainActivity : ComponentActivity(), GamepadViewModel.PermissionCallback {
                                 connectedDeviceName = connectedDevice,
                                 onResetProfileLayout = { vm.resetLayout() },
                                 onBack = { vm.navigateToDashboard() },
-                                modifier = Modifier.fillMaxSize()
+                                modifier = Modifier.fillMaxSize().navigationBarsPadding()
                             )
                         }
 
@@ -283,7 +319,7 @@ class MainActivity : ComponentActivity(), GamepadViewModel.PermissionCallback {
                                 onClearAllLayouts = { vm.clearAllLayouts() },
                                 onBack = { vm.navigateToDashboard() },
                                 vm = vm,
-                                modifier = Modifier.fillMaxSize()
+                                modifier = Modifier.fillMaxSize().navigationBarsPadding()
                             )
                         }
                     }
@@ -297,8 +333,8 @@ class MainActivity : ComponentActivity(), GamepadViewModel.PermissionCallback {
         // Bind to service only if permission flow is complete (granted + discoverability done)
         // ViewModel will call initializeBluetooth() which starts the session
         val vm = viewModelRef
-        if (vm != null && vm.permissionState.value is GamepadViewModel.PermissionStatus.Granted) {
-            // Check if discoverability was completed (service not bound yet)
+        val initComplete = vm?.initializationState?.value == GamepadViewModel.InitializationState.Completed
+        if (vm != null && vm.permissionState.value is GamepadViewModel.PermissionStatus.Granted && initComplete) {
             if (!isBound && gamepadService == null) {
                 bindToService()
             }
@@ -364,8 +400,18 @@ class MainActivity : ComponentActivity(), GamepadViewModel.PermissionCallback {
     }
 
     override fun requestBluetoothEnable() {
+        // Use ACTION_REQUEST_ENABLE intent (shows system dialog) since adapter.enable()
+        // fails on Android 14+ without special privileges
         val enableIntent = Intent(android.bluetooth.BluetoothAdapter.ACTION_REQUEST_ENABLE)
         bluetoothEnableLauncher.launch(enableIntent)
+    }
+
+    override fun bindGamepadService() {
+        bindToService()
+    }
+
+    override fun onDiscoverabilityScreenAllow() {
+        requestDiscoverability()
     }
 
     // Additional callback for Bluetooth enable result (used by initialization flow)
@@ -376,5 +422,11 @@ class MainActivity : ComponentActivity(), GamepadViewModel.PermissionCallback {
     override fun onDestroy() {
         super.onDestroy()
         stopStateCollection()
+        // Unregister Bluetooth state broadcast receiver
+        try {
+            unregisterReceiver(bluetoothStateReceiver)
+        } catch (e: IllegalArgumentException) {
+            // Receiver not registered
+        }
     }
 }

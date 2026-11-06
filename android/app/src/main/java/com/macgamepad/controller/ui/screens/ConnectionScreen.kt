@@ -45,15 +45,52 @@ fun ConnectionScreen(
     modifier: Modifier = Modifier
 ) {
     val permissionState by vm.permissionState.collectAsState()
-    val isRequestingPermissions by vm.isRequestingPermissions.collectAsState()
     val initializationState by vm.initializationState.collectAsState()
 
+    Scaffold(
+        modifier = modifier.fillMaxSize(),
+        containerColor = MaterialTheme.colorScheme.background
+    ) { innerPadding ->
+        ConnectionScreenContent(
+            innerPadding = innerPadding,
+            permissionState = permissionState,
+            initializationState = initializationState,
+            connectionState = connectionState,
+            connectedDeviceName = connectedDeviceName,
+            errorMessage = errorMessage,
+            pairedDevices = pairedDevices,
+            onDeviceConnectClick = onDeviceConnectClick,
+            onDisconnectClick = onDisconnectClick,
+            onStartGamepad = onStartGamepad,
+            vm = vm
+        )
+    }
+}
+
+@Composable
+private fun ConnectionScreenContent(
+    innerPadding: androidx.compose.foundation.layout.PaddingValues,
+    permissionState: GamepadViewModel.PermissionStatus,
+    initializationState: GamepadViewModel.InitializationState,
+    connectionState: BluetoothGamepadService.ConnectionState,
+    connectedDeviceName: String?,
+    errorMessage: String?,
+    pairedDevices: List<BluetoothDevice>,
+    onDeviceConnectClick: (BluetoothDevice) -> Unit,
+    onDisconnectClick: () -> Unit,
+    onStartGamepad: () -> Unit,
+    vm: GamepadViewModel
+) {
+    // Capture Material3 colors for use in DrawScope
+    val primaryColor = MaterialTheme.colorScheme.primary
+    val onSurfaceColor = MaterialTheme.colorScheme.onSurface
+    val onSurfaceVariantColor = MaterialTheme.colorScheme.onSurfaceVariant
+
     Box(
-        modifier = modifier
+        modifier = Modifier
             .fillMaxSize()
-            .background(
-                Brush.verticalGradient(listOf(Bg0, Bg1, Bg1))
-            ),
+            .padding(innerPadding)
+            .background(Brush.verticalGradient(listOf(Bg0, Bg1, Bg1))),
         contentAlignment = Alignment.Center
     ) {
         // Ambient radial glow
@@ -79,9 +116,7 @@ fun ConnectionScreen(
                 .padding(vertical = 20.dp)
         ) {
 
-            // ═══════════════════════════════════════════════════════════════
             // LOGO MARK + TITLE
-            // ══════════════════════════════════════════════════════════════
             Spacer(Modifier.height(8.dp))
 
             // Canvas-drawn controller logo
@@ -199,11 +234,11 @@ fun ConnectionScreen(
                 fontSize = 32.sp,
                 fontWeight = FontWeight.Black,
                 letterSpacing = (-1).sp,
-                color = TextPrimary,
+                color = onSurfaceColor,
                 modifier = Modifier.drawBehind {
                     drawCircle(
                         brush = Brush.radialGradient(
-                            listOf(AccentBlue.copy(alpha = 0.25f), Color.Transparent),
+                            listOf(primaryColor.copy(alpha = 0.25f), Color.Transparent),
                             radius = size.width * 0.6f
                         ),
                         radius = size.width * 0.6f
@@ -213,40 +248,42 @@ fun ConnectionScreen(
             Text(
                 text = "Bluetooth Game Controller",
                 fontSize = 12.sp,
-                color = TextSecondary,
+                color = onSurfaceVariantColor,
                 textAlign = TextAlign.Center,
                 letterSpacing = 0.3.sp
             )
 
             Spacer(Modifier.height(24.dp))
 
-            // ══════════════════════════════════════════════════════════════
             // SINGLE UNIFIED STATE CARD
-            // ══════════════════════════════════════════════════════════════
-            Column(
+            Card(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clip(RoundedCornerShape(24.dp))
-                    .background(Bg2)
-                    .border(1.dp, BorderSubtle, RoundedCornerShape(24.dp))
-                    .padding(24.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(18.dp)
+                    .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(24.dp)),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surface,
+                    contentColor = MaterialTheme.colorScheme.onSurface
+                ),
+                shape = RoundedCornerShape(24.dp),
+                elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
             ) {
-                // Check if we're in the initialization flow
-                val isInitializing = initializationState != GamepadViewModel.InitializationState.Idle
-                val isInitialized = permissionState is GamepadViewModel.PermissionStatus.Granted && initializationState == GamepadViewModel.InitializationState.Idle
+                Column(
+                    modifier = Modifier.padding(24.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(18.dp)
+                ) {
+                val isInitialized = permissionState is GamepadViewModel.PermissionStatus.Granted &&
+                    initializationState == GamepadViewModel.InitializationState.Completed
 
                 if (!isInitialized) {
-                    // Show initialization flow
                     InitializationScreen(
                         state = initializationState,
                         onStart = { vm.startInitialization() },
                         onOpenSettings = { vm.openAppSettings() },
-                        onRetry = { vm.startInitialization() }
+                        onRetry = { vm.startInitialization() },
+                        vm = vm
                     )
                 } else {
-                    // Permissions granted and initialization complete - show connection state UI
                     ConnectionStateContent(
                         connectionState = connectionState,
                         connectedDeviceName = connectedDeviceName,
@@ -259,6 +296,7 @@ fun ConnectionScreen(
                     )
                 }
             }
+            }
 
             Spacer(Modifier.height(16.dp))
 
@@ -266,88 +304,90 @@ fun ConnectionScreen(
             Text(
                 "v1.0 · MacGamepad",
                 fontSize = 10.sp,
-                color = TextTertiary,
+                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
                 textAlign = TextAlign.Center
             )
         }
     }
 }
 
-// ════════════════════════════════════════════════════════════════════════════
 // PERMISSION FLOW SCREENS
-// ═══════════════════════════════════════════════════════════════════════════
 
 @Composable
 private fun InitializationScreen(
     state: GamepadViewModel.InitializationState,
     onStart: () -> Unit,
     onOpenSettings: () -> Unit,
-    onRetry: () -> Unit
+    onRetry: () -> Unit,
+    vm: GamepadViewModel
 ) {
     when (state) {
         is GamepadViewModel.InitializationState.Idle -> {
-            // Initial state - show start button
             PermissionIntroScreen(onInitialize = onStart)
         }
         is GamepadViewModel.InitializationState.RequestingPermissions -> {
-            // Show progress while requesting permissions
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 CircularProgressIndicator(
-                    color = AccentBlue,
+                    color = MaterialTheme.colorScheme.primary,
                     modifier = Modifier.size(36.dp),
                     strokeWidth = 3.dp
                 )
                 Text(
                     "Requesting Bluetooth permissions…",
                     fontSize = 14.sp,
-                    color = TextSecondary,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                     textAlign = TextAlign.Center
                 )
             }
         }
         is GamepadViewModel.InitializationState.RequestingBluetoothEnable -> {
-            // Show progress while enabling Bluetooth
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 CircularProgressIndicator(
-                    color = AccentBlue,
+                    color = MaterialTheme.colorScheme.primary,
                     modifier = Modifier.size(36.dp),
                     strokeWidth = 3.dp
                 )
                 Text(
                     "Enabling Bluetooth…",
                     fontSize = 14.sp,
-                    color = TextSecondary,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                     textAlign = TextAlign.Center
                 )
             }
         }
+        is GamepadViewModel.InitializationState.ShowingDiscoverabilityScreen -> {
+            DiscoverabilityScreen(
+                onAllow = { vm.onDiscoverabilityScreenAllow() },
+                onSkip = { vm.onDiscoverabilitySkipped() },
+                onBack = { vm.resetInitialization() },
+                modifier = Modifier.fillMaxWidth()
+            )
+        }
         is GamepadViewModel.InitializationState.RequestingDiscoverability -> {
-            // Show progress while making discoverable
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 CircularProgressIndicator(
-                    color = AccentBlue,
+                    color = MaterialTheme.colorScheme.primary,
                     modifier = Modifier.size(36.dp),
                     strokeWidth = 3.dp
                 )
                 Text(
                     "Making phone discoverable…",
                     fontSize = 14.sp,
-                    color = TextSecondary,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                     textAlign = TextAlign.Center
                 )
             }
         }
         is GamepadViewModel.InitializationState.Error -> {
-            // Show error with retry option
             Column(
                 verticalArrangement = Arrangement.spacedBy(12.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
@@ -355,32 +395,50 @@ private fun InitializationScreen(
                 Text(
                     state.message,
                     fontSize = 13.sp,
-                    color = AccentRed,
+                    color = MaterialTheme.colorScheme.error,
                     textAlign = TextAlign.Center,
                     lineHeight = 18.sp
                 )
                 if (state.message.contains("permission", ignoreCase = true)) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(50.dp)
-                            .clip(RoundedCornerShape(14.dp))
-                            .background(Brush.linearGradient(listOf(AccentBlue, Color(0xFF2563EB))))
-                            .clickable { onOpenSettings() },
-                        contentAlignment = Alignment.Center
+                    Button(
+                        onClick = onOpenSettings,
+                        modifier = Modifier.fillMaxWidth().height(50.dp),
+                        shape = RoundedCornerShape(14.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.primary,
+                            contentColor = MaterialTheme.colorScheme.onPrimary
+                        )
                     ) {
                         Row(
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Icon(Icons.Default.Settings, null, tint = Color.White, modifier = Modifier.size(18.dp))
-                            Text("Open Settings", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = Color.White)
+                            Icon(Icons.Default.Settings, null, tint = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.size(18.dp))
+                            Text("Open Settings", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = MaterialTheme.colorScheme.onPrimary)
                         }
                     }
                 }
                 TextButton(onClick = onRetry) {
-                    Text("Try Again", fontWeight = FontWeight.Medium, fontSize = 14.sp, color = AccentBlue)
+                    Text("Try Again", fontWeight = FontWeight.Medium, fontSize = 14.sp, color = MaterialTheme.colorScheme.primary)
                 }
+            }
+        }
+        is GamepadViewModel.InitializationState.Completed -> {
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                CircularProgressIndicator(
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(36.dp),
+                    strokeWidth = 3.dp
+                )
+                Text(
+                    "Ready",
+                    fontSize = 14.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center
+                )
             }
         }
     }
@@ -395,35 +453,31 @@ private fun PermissionIntroScreen(onInitialize: () -> Unit) {
         Text(
             "Turn your phone into a gamepad for your Mac.\nWe'll set up Bluetooth so your Mac can find it.",
             fontSize = 13.sp,
-            color = TextSecondary,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center,
             lineHeight = 18.sp
         )
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(52.dp)
-                .clip(RoundedCornerShape(14.dp))
-                .background(
-                    Brush.linearGradient(listOf(AccentBlue, Color(0xFF2563EB)))
-                )
-                .clickable { onInitialize() },
-            contentAlignment = Alignment.Center
+        Button(
+            onClick = onInitialize,
+            modifier = Modifier.fillMaxWidth().height(52.dp),
+            shape = RoundedCornerShape(14.dp),
+            colors = ButtonDefaults.buttonColors(
+                containerColor = MaterialTheme.colorScheme.primary,
+                contentColor = MaterialTheme.colorScheme.onPrimary
+            )
         ) {
             Row(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Icon(Icons.Default.Bluetooth, null, tint = Color.White, modifier = Modifier.size(18.dp))
-                Text("Initialize Controller", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = Color.White)
+                Icon(Icons.Default.Bluetooth, null, tint = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.size(18.dp))
+                Text("Initialize Controller", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = MaterialTheme.colorScheme.onPrimary)
             }
         }
     }
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
 // CONNECTION STATE CONTENT (single unified card)
-// ═══════════════════════════════════════════════════════════════════════════
 
 @Composable
 private fun ConnectionStateContent(
@@ -440,9 +494,7 @@ private fun ConnectionStateContent(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        // Error message (inline, dismissible feel)
         errorMessage?.let { err ->
-            // Don't show "Bluetooth is not enabled" error since we handle that in init flow
             if (!err.contains("Bluetooth is not enabled", ignoreCase = true)) {
                 ErrorInline(err)
             }
@@ -450,26 +502,27 @@ private fun ConnectionStateContent(
 
         when (connectionState) {
             BluetoothGamepadService.ConnectionState.DISCONNECTED -> {
-                DisconnectedState(onRequestDiscoverable = { vm.requestDiscoverability() })
+                DisconnectedState(
+                    onRequestDiscoverable = { vm.requestDiscoverability() },
+                    pairedDevices = pairedDevices
+                )
             }
-
             BluetoothGamepadService.ConnectionState.ERROR -> {
-                // All Bluetooth errors should be handled in init flow now
-                DisconnectedState(onRequestDiscoverable = { vm.requestDiscoverability() })
+                DisconnectedState(
+                    onRequestDiscoverable = { vm.requestDiscoverability() },
+                    pairedDevices = pairedDevices
+                )
             }
-
             BluetoothGamepadService.ConnectionState.REGISTERING,
             BluetoothGamepadService.ConnectionState.CONNECTING -> {
                 ConnectingState()
             }
-
             BluetoothGamepadService.ConnectionState.REGISTERED_WAITING -> {
                 DiscoverableState(
                     pairedDevices = pairedDevices,
                     onDeviceClick = onDeviceConnectClick
                 )
             }
-
             BluetoothGamepadService.ConnectionState.CONNECTED -> {
                 ConnectedState(
                     deviceName = connectedDeviceName,
@@ -481,66 +534,111 @@ private fun ConnectionStateContent(
     }
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
 // STATE-SPECIFIC CONTENT
-// ═══════════════════════════════════════════════════════════════════════════
 
 @Composable
 private fun ErrorInline(message: String) {
-    Row(
+    Surface(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
-            .background(AccentRed.copy(alpha = 0.08f))
-            .border(1.dp, AccentRed.copy(alpha = 0.25f), RoundedCornerShape(12.dp))
-            .padding(12.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalAlignment = Alignment.CenterVertically
+            .border(1.dp, MaterialTheme.colorScheme.error, RoundedCornerShape(12.dp)),
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.errorContainer
     ) {
-        Icon(Icons.Default.ErrorOutline, null, tint = AccentRed, modifier = Modifier.size(14.dp))
-        Text(message, fontSize = 11.sp, color = AccentRed, lineHeight = 15.sp, modifier = Modifier.weight(1f))
+        Row(
+            modifier = Modifier.padding(12.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(Icons.Default.ErrorOutline, null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(14.dp))
+            Text(message, fontSize = 11.sp, color = MaterialTheme.colorScheme.onErrorContainer, lineHeight = 15.sp, modifier = Modifier.weight(1f))
+        }
     }
 }
 
 @Composable
-private fun DisconnectedState(onRequestDiscoverable: () -> Unit) {
+private fun DisconnectedState(
+    onRequestDiscoverable: () -> Unit,
+    pairedDevices: List<BluetoothDevice>
+) {
     Column(
         verticalArrangement = Arrangement.spacedBy(12.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        // Friendly status text instead of "Not Connected" badge
-        Text(
-            "Ready to pair",
-            fontSize = 16.sp,
-            fontWeight = FontWeight.SemiBold,
-            color = TextPrimary
-        )
+        Text("Ready to pair", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
         Text(
             "Make your phone discoverable, then pair from your Mac's Bluetooth settings.",
-            fontSize = 12.sp,
-            color = TextSecondary,
-            textAlign = TextAlign.Center,
-            lineHeight = 18.sp
+            fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center, lineHeight = 18.sp
         )
 
-        // Primary action - prominent button
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(52.dp)
-                .clip(RoundedCornerShape(14.dp))
-                .background(
-                    Brush.linearGradient(listOf(AccentBlue, Color(0xFF2563EB)))
-                )
-                .clickable { onRequestDiscoverable() },
-            contentAlignment = Alignment.Center
+        Button(
+            onClick = onRequestDiscoverable,
+            modifier = Modifier.fillMaxWidth().height(52.dp),
+            shape = RoundedCornerShape(14.dp),
+            colors = ButtonDefaults.buttonColors(
+                containerColor = MaterialTheme.colorScheme.primary,
+                contentColor = MaterialTheme.colorScheme.onPrimary
+            )
         ) {
             Row(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Icon(Icons.Default.BluetoothSearching, null, tint = Color.White, modifier = Modifier.size(20.dp))
-                Text("Make Discoverable", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = Color.White)
+                Icon(Icons.Default.BluetoothSearching, null, tint = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.size(20.dp))
+                Text("Make Discoverable", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = MaterialTheme.colorScheme.onPrimary)
+            }
+        }
+
+        // Previously Paired Macs - available even when disconnected for quick reconnect
+        val macHosts = remember(pairedDevices) {
+            pairedDevices.filter { device ->
+                try {
+                    val name = device.name ?: ""
+                    name.contains("mac", ignoreCase = true) ||
+                    name.contains("book", ignoreCase = true) ||
+                    name.contains("imac", ignoreCase = true) ||
+                    name.contains("studio", ignoreCase = true) ||
+                    name.contains("mini", ignoreCase = true) ||
+                    name.isEmpty()
+                } catch (e: SecurityException) { true }
+            }
+        }
+
+        if (macHosts.isNotEmpty()) {
+            Spacer(Modifier.height(16.dp))
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Previously Paired Macs", fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f))
+                macHosts.forEach { device ->
+                    val name = try { device.name ?: "Mac" } catch (e: SecurityException) { "Mac" }
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onRequestDiscoverable() } // Will trigger discoverability then allow quick connect
+                            .padding(12.dp)
+                            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(10.dp)),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                            contentColor = MaterialTheme.colorScheme.onSurfaceVariant
+                        ),
+                        shape = RoundedCornerShape(10.dp),
+                        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                Icon(Icons.Default.Laptop, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
+                                Text(name, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                            }
+                            Icon(Icons.Default.ChevronRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f), modifier = Modifier.size(16.dp))
+                        }
+                    }
+                }
             }
         }
     }
@@ -552,17 +650,8 @@ private fun ConnectingState() {
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        CircularProgressIndicator(
-            color = AccentBlue,
-            modifier = Modifier.size(36.dp),
-            strokeWidth = 3.dp
-        )
-        Text(
-            "Setting up…",
-            fontSize = 14.sp,
-            color = TextSecondary,
-            textAlign = TextAlign.Center
-        )
+        CircularProgressIndicator(color = MaterialTheme.colorScheme.primary, modifier = Modifier.size(36.dp), strokeWidth = 3.dp)
+        Text("Setting up…", fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
     }
 }
 
@@ -575,33 +664,32 @@ private fun DiscoverableState(
         verticalArrangement = Arrangement.spacedBy(16.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        // Pulsing beacon
         PulsingBeacon()
 
-        Text(
-            "Discoverable — waiting for Mac",
-            fontSize = 15.sp,
-            fontWeight = FontWeight.SemiBold,
-            color = TextPrimary
-        )
+        Text("Discoverable — waiting for Mac", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
 
-        // Pairing guide card
-        Column(
+        Card(
             modifier = Modifier
                 .fillMaxWidth()
-                .clip(RoundedCornerShape(12.dp))
-                .background(Bg3)
-                .border(1.dp, BorderSubtle, RoundedCornerShape(12.dp))
-                .padding(14.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
+                .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(12.dp)),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                contentColor = MaterialTheme.colorScheme.onSurfaceVariant
+            ),
+            shape = RoundedCornerShape(12.dp),
+            elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
         ) {
-            Text("How to Pair", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = TextSecondary, letterSpacing = 0.5.sp)
-            PairingStepRow("1", "Open Bluetooth settings on your Mac")
-            PairingStepRow("2", "Remove any old phone connection")
-            PairingStepRow("3", "Find your phone name and click Connect")
+            Column(
+                modifier = Modifier.padding(14.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Text("How to Pair", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant, letterSpacing = 0.5.sp)
+                PairingStepRow("1", "Open Bluetooth settings on your Mac")
+                PairingStepRow("2", "Remove any old phone connection")
+                PairingStepRow("3", "Find your phone name and click Connect")
+            }
         }
 
-        // Paired Mac hosts - progressive disclosure
         val macHosts = remember(pairedDevices) {
             pairedDevices.filter { device ->
                 try {
@@ -618,34 +706,36 @@ private fun DiscoverableState(
 
         if (macHosts.isNotEmpty()) {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(
-                    "Previously Paired Macs",
-                    fontSize = 10.sp,
-                    fontWeight = FontWeight.Bold,
-                    letterSpacing = 1.sp,
-                    color = TextTertiary
-                )
+                Text("Previously Paired Macs", fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f))
                 macHosts.forEach { device ->
                     val name = try { device.name ?: "Mac" } catch (e: SecurityException) { "Mac" }
-                    Row(
+                    Card(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clip(RoundedCornerShape(10.dp))
-                            .background(Bg4)
-                            .border(1.dp, BorderSubtle, RoundedCornerShape(10.dp))
                             .clickable { onDeviceClick(device) }
-                            .padding(horizontal = 14.dp, vertical = 12.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
+                            .padding(12.dp)
+                            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(10.dp)),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                            contentColor = MaterialTheme.colorScheme.onSurfaceVariant
+                        ),
+                        shape = RoundedCornerShape(10.dp),
+                        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
                     ) {
                         Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Icon(Icons.Default.Laptop, null, tint = AccentBlue, modifier = Modifier.size(18.dp))
-                            Text(name, color = TextPrimary, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                Icon(Icons.Default.Laptop, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
+                                Text(name, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                            }
+                            Icon(Icons.Default.ChevronRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f), modifier = Modifier.size(16.dp))
                         }
-                        Icon(Icons.Default.ChevronRight, null, tint = TextSecondary, modifier = Modifier.size(16.dp))
                     }
                 }
             }
@@ -663,54 +753,49 @@ private fun ConnectedState(
         verticalArrangement = Arrangement.spacedBy(12.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        // Connected status with subtle indicator
-        Row(
-            modifier = Modifier
-                .clip(RoundedCornerShape(32.dp))
-                .background(StatusConnected.copy(alpha = 0.08f))
-                .border(1.dp, StatusConnected.copy(alpha = 0.3f), RoundedCornerShape(32.dp))
-                .padding(horizontal = 16.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        // Connected status badge using Surface
+        Surface(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+            shape = RoundedCornerShape(32.dp),
+            color = MaterialTheme.colorScheme.tertiaryContainer
         ) {
-            Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(StatusConnected))
-            Text("Connected to ${deviceName ?: "Mac"}", color = StatusConnected, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+            Row(
+                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(MaterialTheme.colorScheme.tertiary))
+                Text("Connected to ${deviceName ?: "Mac"}", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onTertiaryContainer)
+            }
         }
 
-        // Primary action - Launch Controller
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(56.dp)
-                .clip(RoundedCornerShape(16.dp))
-                .background(Brush.linearGradient(listOf(StatusConnected, Color(0xFF16A34A))))
-                .clickable { onStart() },
-            contentAlignment = Alignment.Center
+        // Launch Controller button
+        Button(
+            onClick = onStart,
+            modifier = Modifier.fillMaxWidth().height(56.dp),
+            shape = RoundedCornerShape(16.dp),
+            colors = ButtonDefaults.buttonColors(
+                containerColor = MaterialTheme.colorScheme.tertiary,
+                contentColor = MaterialTheme.colorScheme.onTertiary
+            )
         ) {
             Row(
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Icon(Icons.Default.SportsEsports, null, tint = Color.White, modifier = Modifier.size(22.dp))
-                Text("Launch Controller", fontWeight = FontWeight.ExtraBold, fontSize = 16.sp, color = Color.White)
+                Icon(Icons.Default.SportsEsports, null, tint = MaterialTheme.colorScheme.onTertiary, modifier = Modifier.size(22.dp))
+                Text("Launch Controller", fontWeight = FontWeight.ExtraBold, fontSize = 16.sp, color = MaterialTheme.colorScheme.onTertiary)
             }
         }
 
-        // Disconnect - subtle text button
-        Text(
-            "Disconnect",
-            fontSize = 13.sp,
-            color = TextTertiary,
-            modifier = Modifier
-                .clickable { onDisconnect() }
-                .padding(12.dp)
-        )
+        // Disconnect button
+        TextButton(onClick = onDisconnect) {
+            Text("Disconnect", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(12.dp))
+        }
     }
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// Pulsing beacon — shown during REGISTERED_WAITING state
-// ═══════════════════════════════════════════════════════════════════════════
+// Pulsing beacon
 
 @Composable
 private fun PulsingBeacon() {
@@ -718,72 +803,55 @@ private fun PulsingBeacon() {
     val pulseScale by infiniteTransition.animateFloat(
         initialValue = 0.7f,
         targetValue = 1.3f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(900, easing = EaseInOut),
-            repeatMode = RepeatMode.Reverse
-        ),
+        animationSpec = infiniteRepeatable(animation = tween(900, easing = EaseInOut), repeatMode = RepeatMode.Reverse),
         label = "pulseScale"
     )
     val pulseAlpha by infiniteTransition.animateFloat(
         initialValue = 0.6f,
         targetValue = 0.1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(900, easing = EaseInOut),
-            repeatMode = RepeatMode.Reverse
-        ),
+        animationSpec = infiniteRepeatable(animation = tween(900, easing = EaseInOut), repeatMode = RepeatMode.Reverse),
         label = "pulseAlpha"
     )
 
+    val beaconColor = MaterialTheme.colorScheme.tertiary
+
     Box(contentAlignment = Alignment.Center, modifier = Modifier.size(56.dp)) {
-        // Outer pulse ring
         Canvas(modifier = Modifier.fillMaxSize()) {
-            drawCircle(
-                color = AccentAmber.copy(alpha = pulseAlpha),
-                radius = (size.minDimension / 2f) * pulseScale,
-                style = Stroke(2f)
-            )
+            drawCircle(color = beaconColor.copy(alpha = pulseAlpha), radius = (size.minDimension / 2f) * pulseScale, style = Stroke(2f))
         }
-        // Inner static dot
         Box(
             modifier = Modifier
                 .size(24.dp)
                 .clip(CircleShape)
-                .background(AccentAmber.copy(alpha = 0.15f))
-                .border(1.5.dp, AccentAmber.copy(alpha = 0.5f), CircleShape),
+                .background(beaconColor.copy(alpha = 0.15f))
+                .border(1.5.dp, beaconColor.copy(alpha = 0.5f), CircleShape),
             contentAlignment = Alignment.Center
         ) {
-            Icon(Icons.Default.Bluetooth, null, tint = AccentAmber, modifier = Modifier.size(12.dp))
+            Icon(Icons.Default.Bluetooth, null, tint = beaconColor, modifier = Modifier.size(12.dp))
         }
     }
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
 // Numbered pairing step row
-// ═══════════════════════════════════════════════════════════════════════════
 
 @Composable
 private fun PairingStepRow(num: String, text: String) {
-    Row(
-        verticalAlignment = Alignment.Top,
-        horizontalArrangement = Arrangement.spacedBy(10.dp)
-    ) {
+    Row(verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         Box(
             modifier = Modifier
                 .size(18.dp)
                 .clip(CircleShape)
-                .background(AccentBlue.copy(alpha = 0.15f))
-                .border(1.dp, AccentBlue.copy(alpha = 0.3f), CircleShape),
+                .background(MaterialTheme.colorScheme.primaryContainer)
+                .border(1.dp, MaterialTheme.colorScheme.primary, CircleShape),
             contentAlignment = Alignment.Center
         ) {
-            Text(num, fontSize = 9.sp, color = AccentBlue, fontWeight = FontWeight.ExtraBold)
+            Text(num, fontSize = 9.sp, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.ExtraBold)
         }
-        Text(text, fontSize = 11.sp, color = TextSecondary, lineHeight = 16.sp, modifier = Modifier.weight(1f))
+        Text(text, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, lineHeight = 16.sp, modifier = Modifier.weight(1f))
     }
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// Bluetooth Enable Screen - shown when Bluetooth is disabled (kept for fallback)
-// ═══════════════════════════════════════════════════════════════════════════
+// Bluetooth Enable Screen
 
 @Composable
 fun BluetoothEnableScreen(
@@ -792,136 +860,78 @@ fun BluetoothEnableScreen(
     modifier: Modifier = Modifier
 ) {
     val backHandlerEnabled = remember { true }
-    BackHandler(backHandlerEnabled) {
-        // Consume back press - user must explicitly choose Enable or Cancel
-    }
+    BackHandler(backHandlerEnabled) {}
 
     Box(
         modifier = modifier
             .fillMaxSize()
-            .background(
-                Brush.verticalGradient(listOf(Bg0, Bg1, Bg1))
-            ),
+            .background(Brush.verticalGradient(listOf(Bg0, Bg1, Bg1))),
         contentAlignment = Alignment.Center
     ) {
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(0.dp),
-            modifier = Modifier
-                .fillMaxWidth(0.88f)
-                .padding(vertical = 20.dp)
+            modifier = Modifier.fillMaxWidth(0.88f).padding(vertical = 20.dp)
         ) {
             Spacer(Modifier.height(40.dp))
 
-            // Bluetooth icon with glow
             Box(
                 modifier = Modifier
                     .size(88.dp)
-                    .background(
-                        Brush.radialGradient(
-                            listOf(AccentBlue.copy(alpha = 0.2f), Color.Transparent),
-                            center = Offset(44f, 44f),
-                            radius = 60f
-                        )
-                    )
+                    .background(Brush.radialGradient(listOf(AccentBlue.copy(alpha = 0.2f), Color.Transparent), center = Offset(44f, 44f), radius = 60f))
                     .clip(CircleShape),
                 contentAlignment = Alignment.Center
             ) {
-                Icon(Icons.Default.Bluetooth, null, tint = AccentBlue, modifier = Modifier.size(44.dp))
+                Icon(Icons.Default.Bluetooth, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(44.dp))
             }
 
             Spacer(Modifier.height(16.dp))
 
-            Text(
-                text = "Bluetooth is Off",
-                fontSize = 24.sp,
-                fontWeight = FontWeight.Black,
-                color = TextPrimary,
-                textAlign = TextAlign.Center,
-                letterSpacing = (-0.5).sp
-            )
+            Text("Bluetooth is Off", fontSize = 24.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface, textAlign = TextAlign.Center, letterSpacing = (-0.5).sp)
 
             Spacer(Modifier.height(8.dp))
 
-            Text(
-                text = "Please enable Bluetooth to use MacGamepad",
-                fontSize = 13.sp,
-                color = TextSecondary,
-                textAlign = TextAlign.Center,
-                lineHeight = 18.sp
-            )
+            Text("Please enable Bluetooth to use MacGamepad", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center, lineHeight = 18.sp)
 
             Spacer(Modifier.height(24.dp))
 
-            // Explanation card
-            Column(
+            Card(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clip(RoundedCornerShape(20.dp))
-                    .background(Bg2)
-                    .border(1.dp, BorderSubtle, RoundedCornerShape(20.dp))
-                    .padding(20.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
+                    .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(20.dp)),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surface,
+                    contentColor = MaterialTheme.colorScheme.onSurface
+                ),
+                shape = RoundedCornerShape(20.dp),
+                elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
             ) {
-                Text(
-                    "MacGamepad needs Bluetooth to be enabled to work as a gamepad controller for your Mac.",
-                    fontSize = 12.sp,
-                    color = TextPrimary,
-                    textAlign = TextAlign.Center,
-                    lineHeight = 16.sp
-                )
+                Text("MacGamepad needs Bluetooth to be enabled to work as a gamepad controller for your Mac.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface, textAlign = TextAlign.Center, lineHeight = 16.sp, modifier = Modifier.padding(20.dp))
             }
 
             Spacer(Modifier.height(32.dp))
 
-            // Buttons
-            Column(
-                modifier = Modifier.fillMaxWidth(),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                // Enable Bluetooth button
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(52.dp)
-                        .clip(RoundedCornerShape(14.dp))
-                        .background(
-                            Brush.linearGradient(listOf(AccentBlue, Color(0xFF2563EB)))
-                        )
-                        .clickable { onEnable() },
-                    contentAlignment = Alignment.Center
+            Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Button(
+                    onClick = onEnable,
+                    modifier = Modifier.fillMaxWidth().height(52.dp),
+                    shape = RoundedCornerShape(14.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.primary,
+                        contentColor = MaterialTheme.colorScheme.onPrimary
+                    )
                 ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(52.dp)
-                            .padding(horizontal = 24.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Row(
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(Icons.Default.Bluetooth, null, tint = Color.White, modifier = Modifier.size(20.dp))
-                            Text("Enable Bluetooth", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = Color.White)
+                    Row(modifier = Modifier.fillMaxWidth().height(52.dp).padding(horizontal = 24.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Default.Bluetooth, null, tint = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.size(20.dp))
+                            Text("Enable Bluetooth", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = MaterialTheme.colorScheme.onPrimary)
                         }
-                        Icon(Icons.Default.ArrowForward, null, tint = Color.White, modifier = Modifier.size(20.dp))
+                        Icon(Icons.Default.ArrowForward, null, tint = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.size(20.dp))
                     }
                 }
-
-                // Cancel button
-                Text(
-                    "Cancel",
-                    fontWeight = FontWeight.Medium,
-                    fontSize = 14.sp,
-                    color = TextSecondary,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 8.dp)
-                        .clickable { onCancel() }
-                )
+                TextButton(onClick = onCancel) {
+                    Text("Cancel", fontWeight = FontWeight.Medium, fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp))
+                }
             }
 
             Spacer(Modifier.height(24.dp))

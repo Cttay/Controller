@@ -14,6 +14,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -25,11 +26,11 @@ import androidx.compose.ui.tooling.preview.Preview
 fun DiscoverabilityScreen(
     onAllow: () -> Unit,
     onSkip: () -> Unit,
+    onBack: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
-    val backHandlerEnabled = remember { true }
-    androidx.activity.compose.BackHandler(backHandlerEnabled) {
-        // Consume back press - user must explicitly choose
+    androidx.activity.compose.BackHandler(true) {
+        onBack()
     }
 
     Box(
@@ -45,59 +46,59 @@ fun DiscoverabilityScreen(
             verticalArrangement = Arrangement.spacedBy(0.dp),
             modifier = Modifier
                 .fillMaxWidth(0.88f)
-                .padding(vertical = 20.dp)
+                .padding(vertical = 16.dp)
         ) {
-            Spacer(Modifier.height(40.dp))
+            Spacer(Modifier.height(16.dp))
 
             // Discoverability icon with glow
             Box(
                 modifier = Modifier
-                    .size(88.dp)
+                    .size(72.dp)
                     .background(
                         Brush.radialGradient(
                             listOf(AccentGreen.copy(alpha = 0.2f), Color.Transparent),
-                            center = androidx.compose.ui.geometry.Offset(44f, 44f),
-                            radius = 60f
+                            center = androidx.compose.ui.geometry.Offset(36f, 36f),
+                            radius = 50f
                         )
                     )
                     .clip(CircleShape),
                 contentAlignment = Alignment.Center
             ) {
-                Icon(Icons.Default.Visibility, null, tint = AccentGreen, modifier = Modifier.size(44.dp))
+                Icon(Icons.Default.Visibility, null, tint = AccentGreen, modifier = Modifier.size(36.dp))
             }
 
-            Spacer(Modifier.height(16.dp))
+            Spacer(Modifier.height(12.dp))
 
             Text(
                 text = "Make Your Phone Discoverable",
-                fontSize = 24.sp,
+                fontSize = 20.sp,
                 fontWeight = FontWeight.Black,
-                color = TextPrimary,
+                color = MaterialTheme.colorScheme.onSurface,
                 textAlign = TextAlign.Center,
                 letterSpacing = (-0.5).sp
             )
 
-            Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(6.dp))
 
             Text(
                 text = "Help your Mac find this phone for pairing",
-                fontSize = 13.sp,
-                color = TextSecondary,
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center,
-                lineHeight = 18.sp
+                lineHeight = 16.sp
             )
 
-            Spacer(Modifier.height(24.dp))
+            Spacer(Modifier.height(16.dp))
 
             // Explanation card
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clip(RoundedCornerShape(20.dp))
-                    .background(Bg2)
-                    .border(1.dp, BorderSubtle, RoundedCornerShape(20.dp))
-                    .padding(20.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp),
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(MaterialTheme.colorScheme.surface)
+                    .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(16.dp))
+                    .padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 DiscoverabilityInfoRow(
@@ -120,93 +121,101 @@ fun DiscoverabilityScreen(
                 )
             }
 
-            Spacer(Modifier.height(24.dp))
+            Spacer(Modifier.height(16.dp))
 
             // Alternative option
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clip(RoundedCornerShape(16.dp))
-                    .background(Bg3)
-                    .border(1.dp, BorderSubtle, RoundedCornerShape(16.dp))
-                    .padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant)
+                    .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(12.dp))
+                    .padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Row(
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(Icons.Default.Info, null, tint = AccentCyan, modifier = Modifier.size(16.dp))
+                    Icon(Icons.Default.Info, null, tint = AccentCyan, modifier = Modifier.size(14.dp))
                     Text(
                         "Prefer manual pairing?",
-                        fontSize = 12.sp,
+                        fontSize = 11.sp,
                         fontWeight = FontWeight.SemiBold,
-                        color = TextPrimary
+                        color = MaterialTheme.colorScheme.onSurface
                     )
                 }
                 Text(
                     "You can skip discoverability and pair from your Mac's Bluetooth settings instead. Your phone will still be visible as \"MacGamepad\".",
-                    fontSize = 11.sp,
-                    color = TextSecondary,
+                    fontSize = 10.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                     textAlign = TextAlign.Center,
-                    lineHeight = 15.sp
+                    lineHeight = 14.sp
                 )
             }
 
-            Spacer(Modifier.height(32.dp))
+            Spacer(Modifier.height(16.dp))
 
             // Buttons
             Column(
                 modifier = Modifier.fillMaxWidth(),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
+                verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 // Allow Discoverability button
                 Button(
                     onClick = onAllow,
                     modifier = Modifier.fillMaxWidth(),
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = AccentGreen,
-                        contentColor = Color.White
+                        containerColor = MaterialTheme.colorScheme.tertiary,
+                        contentColor = MaterialTheme.colorScheme.onTertiary
                     ),
-                    shape = RoundedCornerShape(14.dp)
+                    shape = RoundedCornerShape(12.dp)
                 ) {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(52.dp)
-                            .padding(horizontal = 24.dp),
+                            .height(48.dp)
+                            .padding(horizontal = 20.dp),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Row(
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Icon(Icons.Default.BluetoothConnected, null, tint = Color.White, modifier = Modifier.size(20.dp))
-                            Text("Allow Discoverability", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                            Icon(Icons.Default.BluetoothConnected, null, tint = MaterialTheme.colorScheme.onTertiary, modifier = Modifier.size(18.dp))
+                            Text("Allow Discoverability", fontWeight = FontWeight.Bold, fontSize = 13.sp, color = MaterialTheme.colorScheme.onTertiary)
                         }
-                        Icon(Icons.Default.ArrowForward, null, tint = Color.White, modifier = Modifier.size(20.dp))
+                        Icon(Icons.Default.ArrowForward, null, tint = MaterialTheme.colorScheme.onTertiary, modifier = Modifier.size(18.dp))
                     }
                 }
 
-                // Skip for now button
-                TextButton(
+                // Skip for now button - made more visible
+                Button(
                     onClick = onSkip,
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
-                    colors = ButtonDefaults.textButtonColors(contentColor = TextSecondary)
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.surface,
+                        contentColor = MaterialTheme.colorScheme.primary
+                    ),
+                    shape = RoundedCornerShape(12.dp)
                 ) {
                     Row(
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(48.dp)
+                            .padding(horizontal = 20.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text("Skip for now — pair manually", fontWeight = FontWeight.Medium, fontSize = 14.sp, color = TextSecondary)
-                        Icon(Icons.Default.ChevronRight, null, tint = TextTertiary, modifier = Modifier.size(16.dp))
+                        Text("Skip for now — pair manually", fontWeight = FontWeight.Bold, fontSize = 13.sp, color = MaterialTheme.colorScheme.primary)
+                        Icon(Icons.Default.ChevronRight, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(14.dp))
                     }
                 }
             }
 
-            Spacer(Modifier.height(24.dp))
+            Spacer(Modifier.height(16.dp))
         }
     }
 }
@@ -236,8 +245,8 @@ private fun DiscoverabilityInfoRow(
             modifier = Modifier.weight(1f),
             verticalArrangement = Arrangement.spacedBy(2.dp)
         ) {
-            Text(title, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = TextPrimary)
-            Text(description, fontSize = 10.sp, color = TextSecondary, lineHeight = 14.sp)
+            Text(title, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
+            Text(description, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, lineHeight = 14.sp)
         }
     }
 }
