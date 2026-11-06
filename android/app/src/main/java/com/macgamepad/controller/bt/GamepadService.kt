@@ -1,10 +1,14 @@
 package com.macgamepad.controller.bt
 
 import android.annotation.SuppressLint
-import android.app.*
-import android.bluetooth.*
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
+import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ServiceInfo
 import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
@@ -60,6 +64,11 @@ class GamepadService : Service(), SensorEventListener {
 
     // BT Gamepad Service helper
     lateinit var btService: BluetoothGamepadService
+    
+    // btService readiness signal (set after initialize() in startSession)
+    private val _btServiceReady = MutableStateFlow(false)
+    val btServiceReady: StateFlow<Boolean> = _btServiceReady.asStateFlow()
+    
     private var serviceJob: Job? = null
     private val serviceScope = CoroutineScope(Dispatchers.Default + SupervisorJob())
 
@@ -100,7 +109,7 @@ class GamepadService : Service(), SensorEventListener {
                 android.Manifest.permission.BLUETOOTH_CONNECT,
                 android.Manifest.permission.BLUETOOTH_SCAN
             )
-            val hasBtPermission = btPermissions.any { checkSelfPermission(it) == android.content.pm.PackageManager.PERMISSION_GRANTED }
+            val hasBtPermission = btPermissions.all { checkSelfPermission(it) == android.content.pm.PackageManager.PERMISSION_GRANTED }
             
             Log.w(TAG, "Permission check: hasFgPermission=$hasFgPermission, hasBtPermission=$hasBtPermission")
             if (!hasFgPermission || !hasBtPermission) {
@@ -109,7 +118,12 @@ class GamepadService : Service(), SensorEventListener {
                 return START_NOT_STICKY
             }
         }
-        startForeground(NOTIFICATION_ID, createNotification())
+        // 3-parameter startForeground requires API 29+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            startForeground(NOTIFICATION_ID, createNotification(), ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE)
+        } else {
+            startForeground(NOTIFICATION_ID, createNotification())
+        }
         return START_STICKY
     }
 
@@ -123,6 +137,7 @@ class GamepadService : Service(), SensorEventListener {
     fun startSession() {
         btService.setMode(_mode.value)
         btService.initialize()
+        _btServiceReady.value = true  // Signal btService is ready for state collection
         startTransmissionLoop()
     }
 
@@ -420,10 +435,12 @@ class GamepadService : Service(), SensorEventListener {
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("MacGamepad Connected")
             .setContentText("Emulating native controller via Bluetooth HID")
-            .setSmallIcon(android.R.drawable.stat_sys_data_bluetooth) // Use system icon for compatibility
+            .setSmallIcon(R.drawable.ic_notification)
             .setContentIntent(pendingIntent)
-            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
+            .setOngoing(true)
+            .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
             .build()
     }
 
@@ -432,7 +449,7 @@ class GamepadService : Service(), SensorEventListener {
             val channel = NotificationChannel(
                 CHANNEL_ID,
                 "MacGamepad Connection Service",
-                NotificationManager.IMPORTANCE_LOW
+                NotificationManager.IMPORTANCE_DEFAULT
             ).apply {
                 description = "Keeps Bluetooth controller connection alive in background"
             }

@@ -252,8 +252,8 @@ class BluetoothGamepadService(private val context: Context) {
         val hid = hidDevice ?: return false
 
         val reportData = reportPacker.pack(state)
-        // Always use Report ID 3 — the gamepad collection inside the unified descriptor
-        return hid.sendReport(device, GamepadHidDescriptor.GAMEPAD_REPORT_ID.toInt(), reportData)
+        // Use Report ID 1 — the gamepad collection in the unified descriptor
+        return hid.sendReport(device, KeyboardHidDescriptor.GAMEPAD_REPORT_ID.toInt(), reportData)
     }
 
     /**
@@ -303,7 +303,7 @@ class BluetoothGamepadService(private val context: Context) {
         }
 
         val subclass: Byte = BluetoothHidDevice.SUBCLASS2_GAMEPAD
-        val descriptor = GamepadHidDescriptor.descriptor
+        val descriptor = KeyboardHidDescriptor.descriptor
 
         val sdpSettings = BluetoothHidDeviceAppSdpSettings(
             targetDeviceName,
@@ -336,7 +336,7 @@ class BluetoothGamepadService(private val context: Context) {
             val channel = NotificationChannel(
                 CHANNEL_ID,
                 "MacGamepad Connection Service",
-                NotificationManager.IMPORTANCE_LOW
+                NotificationManager.IMPORTANCE_DEFAULT
             ).apply {
                 description = "Keeps Bluetooth controller connection alive in background"
             }
