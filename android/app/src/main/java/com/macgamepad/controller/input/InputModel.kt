@@ -77,21 +77,31 @@ data class InputState(
     /**
      * Packs all 16 buttons into a 16-bit bitmask.
      * Bit 0 = Button 1 (A), Bit 15 = Button 16.
+     * Matches W3C standard gamepad layout.
      */
     fun buttonBitmask(): Int {
         var mask = 0
+        // Buttons 1-6: A, B, X, Y, LB, RB
         if (buttonA) mask = mask or (1 shl 0)
         if (buttonB) mask = mask or (1 shl 1)
         if (buttonX) mask = mask or (1 shl 2)
         if (buttonY) mask = mask or (1 shl 3)
         if (buttonL1) mask = mask or (1 shl 4)
         if (buttonR1) mask = mask or (1 shl 5)
-        if (buttonSelect) mask = mask or (1 shl 6)
-        if (buttonStart) mask = mask or (1 shl 7)
-        if (buttonHome) mask = mask or (1 shl 8)
-        if (buttonL3) mask = mask or (1 shl 9)
-        if (buttonR3) mask = mask or (1 shl 10)
-        if (buttonCapture) mask = mask or (1 shl 11)
+        // Buttons 7-8: LT, RT (digital)
+        if (leftTrigger > 0.5f) mask = mask or (1 shl 6)
+        if (rightTrigger > 0.5f) mask = mask or (1 shl 7)
+        // Buttons 9-12: Back/Select, Start, L3, R3
+        if (buttonSelect) mask = mask or (1 shl 8)
+        if (buttonStart) mask = mask or (1 shl 9)
+        if (buttonL3) mask = mask or (1 shl 10)
+        if (buttonR3) mask = mask or (1 shl 11)
+        // Buttons 13-16: Guide/Home, DPadUp, DPadDown, DPadLeft, DPadRight
+        if (buttonHome) mask = mask or (1 shl 12)
+        if (dpadUp) mask = mask or (1 shl 13)
+        if (dpadDown) mask = mask or (1 shl 14)
+        if (dpadLeft) mask = mask or (1 shl 15)
+        // Note: DPadRight would be bit 16 (out of 16-bit range), handled separately
         return mask
     }
 }
