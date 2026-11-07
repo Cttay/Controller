@@ -1,0 +1,81 @@
+# Build outputs (never need agent to read these)
+build/
+android/build/
+android/app/build/
+out/
+*.class
+*.apk
+*.aar
+*.ap_
+*.dex
+*.so
+*.jar
+
+# Gradle caches (huge, regeneratable)
+.gradle/
+!gradle/wrapper/gradle-wrapper.jar
+!gradle/wrapper/gradle-wrapper.properties
+
+# IDE (personal config)
+.idea/
+*.iml
+*.iws
+*.ipr
+
+# Kotlin generated
+*.kt.html
+
+# CodeGraph index (regeneratable, but agent can read if needed)
+# .codegraph/
+
+# Testing artifacts
+test-results/
+android/test-results/
+*.ec
+*.coverage
+coverage/
+
+# Profiling
+*.hprof
+captures/
+*.trace
+
+# Logs
+*.log
+*.log.*
+
+# Temp/swap
+*.tmp
+*.temp
+*.swp
+*.swo
+*~
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Thumbs
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Secrets (should never be in repo anyway)
+*.keystore
+*.jks
+*.properties.local
+secrets.gradle
+
+# Oh-my-opencode-slim worktrees
+.slim/worktrees/
+.slim/worktrees.json
+
+# Compose previews
+*.preview.txt
+
+# Tools build outputs
+tools/gamepad_tester
+tools/gamepad_bridge
+tools/print_reports

@@ -9,8 +9,85 @@ android/app/build/
 *.apk
 *.aar
 tools/gamepad_tester
+tools/gamepad_bridge
+tools/print_reports
 
+# Gradle
+.gradle/
+!gradle/wrapper/gradle-wrapper.jar
+!gradle/wrapper/gradle-wrapper.properties
+
+# Kotlin
+*.kt.html
+*.kt.jar
+
+# Android
+*.ap_
+*.dex
+*.aab
+*.so
+
+# Build outputs
+out/
+*.output
+
+# IDE
+.idea/
+*.iml
+*.iws
+*.ipr
+out/
+
+# macOS
+.AppleDouble
+.LSOverride
+._*
+
+# Logs
+*.log
+*.log.*
+
+# Temp/swap
+*.tmp
+*.temp
+*.swp
+*.swo
+*~
+
+# Testing
+test-results/
+android/test-results/
+*.ec
+
+# Profiling
+*.hprof
+captures/
+*.trace
+
+# Secrets (never commit)
+*.keystore
+*.jks
+*.properties.local
+secrets.gradle
+
+# Oh-my-opencode-slim worktrees
 # BEGIN oh-my-opencode-slim worktrees
 .slim/worktrees/
 .slim/worktrees.json
 # END oh-my-opencode-slim worktrees
+
+# CodeGraph index (regeneratable, but agents need access)
+!.codegraph/
+
+# Coverage
+*.coverage
+coverage/
+android/app/build/reports/coverage/
+
+# Compose/Preview
+*.preview.txt
+
+# Misc
+Thumbs.db
+ehthumbs.db
+Desktop.ini
