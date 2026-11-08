@@ -15,8 +15,10 @@ import androidx.lifecycle.LifecycleOwner
 import android.bluetooth.BluetoothDevice
 import androidx.core.content.ContextCompat
 import android.Manifest
-import com.macgamepad.controller.bt.BluetoothGamepadService
+import com.macgamepad.controller.bt.ConnectionState
 import com.macgamepad.controller.bt.GamepadService
+import com.macgamepad.controller.bt.HidDeviceManager
+import com.macgamepad.controller.bt.Mode
 import com.macgamepad.controller.input.InputState
 import com.macgamepad.controller.input.InputThrottler
 import com.macgamepad.controller.input.ThrottleResult
@@ -80,8 +82,8 @@ class GamepadViewModel(application: Application) : AndroidViewModel(application)
     // ================================================================
     // Flows mapping connection states directly from GamepadService
     // ================================================================
-    private val _connectionState = MutableStateFlow(BluetoothGamepadService.ConnectionState.DISCONNECTED)
-    val connectionState: StateFlow<BluetoothGamepadService.ConnectionState> = _connectionState.asStateFlow()
+    private val _connectionState = MutableStateFlow(ConnectionState.DISCONNECTED)
+    val connectionState: StateFlow<ConnectionState> = _connectionState.asStateFlow()
 
     private val _connectedDeviceName = MutableStateFlow<String?>(null)
     val connectedDeviceName: StateFlow<String?> = _connectedDeviceName.asStateFlow()
@@ -89,8 +91,8 @@ class GamepadViewModel(application: Application) : AndroidViewModel(application)
     private val _errorMessage = MutableStateFlow<String?>(null)
     val errorMessage: StateFlow<String?> = _errorMessage.asStateFlow()
 
-    private val _mode = MutableStateFlow(GamepadService.Companion.Mode.GAMEPAD)
-    val mode: StateFlow<GamepadService.Companion.Mode> = _mode.asStateFlow()
+    private val _mode = MutableStateFlow(Mode.GAMEPAD)
+    val mode: StateFlow<Mode> = _mode.asStateFlow()
 
     private val _pairedDevices = MutableStateFlow<List<BluetoothDevice>>(emptyList())
     val pairedDevices: StateFlow<List<BluetoothDevice>> = _pairedDevices.asStateFlow()
@@ -201,14 +203,15 @@ class GamepadViewModel(application: Application) : AndroidViewModel(application)
         _gamepadService.value = service
         if (service != null) {
             Log.i(TAG, "Service reference acquired by ViewModel")
-            _connectionState.value = service.btService.connectionState.value
-            _connectedDeviceName.value = service.btService.connectedDeviceName.value
-            _errorMessage.value = service.btService.errorMessage.value
-            _pairedDevices.value = service.btService.getBondedDevices()
+            // Note: Service now uses HidManager internally; we observe via service.hidManager
+            _connectionState.value = service.hidManager.connectionState.value
+            _connectedDeviceName.value = service.hidManager.connectedDeviceName.value
+            _errorMessage.value = service.hidManager.errorMessage.value
+            _pairedDevices.value = service.hidManager.getBondedDevices()
 
-            val savedMode = prefs.getString(KEY_MODE, GamepadService.Companion.Mode.GAMEPAD.name)
-                ?.let { GamepadService.Companion.Mode.valueOf(it) }
-                ?: GamepadService.Companion.Mode.GAMEPAD
+            val savedMode = prefs.getString(KEY_MODE, Mode.GAMEPAD.name)
+                ?.let { Mode.valueOf(it) }
+                ?: Mode.GAMEPAD
             _mode.value = savedMode
             service.setMode(savedMode)
 
@@ -219,18 +222,19 @@ class GamepadViewModel(application: Application) : AndroidViewModel(application)
 
     private fun updateTargetDeviceName() {
         val name = when (_mode.value) {
-            GamepadService.Companion.Mode.GAMEPAD -> "MacGamepad"
-            GamepadService.Companion.Mode.KEYBOARD -> "MacGamepad Keyboard"
+            Mode.GAMEPAD -> "MacGamepad"
+            Mode.KEYBOARD -> "MacGamepad Keyboard"
+            Mode.MOUSE -> "MacGamepad Mouse"
         }
         Log.i(TAG, "Setting target Bluetooth device name to: $name")
-        _gamepadService.value?.btService?.setTargetDeviceName(name)
+        _gamepadService.value?.hidManager?.setTargetDeviceName(name)
     }
 
     /**
      * Update connection state flows (called by MainActivity ServiceConnection).
      */
     fun updateServiceStates(
-        connState: BluetoothGamepadService.ConnectionState,
+        connState: ConnectionState,
         devName: String?,
         error: String?
     ) {
@@ -239,15 +243,15 @@ class GamepadViewModel(application: Application) : AndroidViewModel(application)
         _errorMessage.value = error
 
         _gamepadService.value?.let { service ->
-            _pairedDevices.value = service.btService.getBondedDevices()
+            _pairedDevices.value = service.hidManager.getBondedDevices()
         }
 
         // On connect: jump from Connection screen to Dashboard
-        if (connState == BluetoothGamepadService.ConnectionState.CONNECTED && _currentScreen.value == Screen.CONNECTION) {
+        if (connState == ConnectionState.CONNECTED && _currentScreen.value == Screen.CONNECTION) {
             _currentScreen.value = Screen.DASHBOARD
         }
         // On disconnect: return to Connection from Gamepad only (Dashboard/Profile/Settings stay visible)
-        if (connState != BluetoothGamepadService.ConnectionState.CONNECTED && _currentScreen.value == Screen.GAMEPAD) {
+        if (connState != ConnectionState.CONNECTED && _currentScreen.value == Screen.GAMEPAD) {
             _currentScreen.value = Screen.DASHBOARD
         }
     }
@@ -281,7 +285,7 @@ class GamepadViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun connectToDevice(device: BluetoothDevice) {
-        _gamepadService.value?.btService?.connectToDevice(device)
+        _gamepadService.value?.hidManager?.connectToDevice(device)
     }
 
     fun disconnect() {
@@ -289,7 +293,7 @@ class GamepadViewModel(application: Application) : AndroidViewModel(application)
         _currentScreen.value = Screen.CONNECTION
     }
 
-    fun setMode(newMode: GamepadService.Companion.Mode) {
+    fun setMode(newMode: Mode) {
         _mode.value = newMode
         prefs.edit().putString(KEY_MODE, newMode.name).apply()
         _gamepadService.value?.let { service ->
@@ -309,8 +313,8 @@ class GamepadViewModel(application: Application) : AndroidViewModel(application)
         }
         _gamepadService.value?.let { service ->
             updateTargetDeviceName()
-            val currState = service.btService.connectionState.value
-            if (changed && currState == BluetoothGamepadService.ConnectionState.REGISTERED_WAITING) {
+            val currState = service.hidManager.connectionState.value
+            if (changed && currState == ConnectionState.REGISTERED_WAITING) {
                 Log.i(TAG, "Restarting discoverable session for profile: $profileId")
                 service.stopSession()
                 service.startSession()
@@ -319,7 +323,7 @@ class GamepadViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun navigateToGamepad() {
-        if (_connectionState.value == BluetoothGamepadService.ConnectionState.CONNECTED) {
+        if (_connectionState.value == ConnectionState.CONNECTED) {
             _currentScreen.value = Screen.GAMEPAD
         }
     }
@@ -561,7 +565,8 @@ class GamepadViewModel(application: Application) : AndroidViewModel(application)
         if (isSuccess) {
             Log.i(TAG, "Discoverability granted (resultCode=$resultCode), proceeding to HID initialization")
             _initializationState.value = InitializationState.Completed
-            initializeBluetooth()
+            // Bind service - onServiceConnected will call initializeBluetooth()
+            permissionCallback?.bindGamepadService()
         } else {
             // User cancelled discoverability - show error, don't proceed
             Log.w(TAG, "Discoverability cancelled/denied: $resultCode")
@@ -647,8 +652,8 @@ class GamepadViewModel(application: Application) : AndroidViewModel(application)
         
         if (adapter?.isEnabled == true) {
             // Bluetooth is on, show custom discoverability screen first
+            // DO NOT bind service yet - wait for discoverability grant
             _initializationState.value = InitializationState.ShowingDiscoverabilityScreen
-            permissionCallback?.bindGamepadService()
         } else {
             // Need to enable Bluetooth first
             _initializationState.value = InitializationState.RequestingBluetoothEnable
@@ -700,8 +705,8 @@ class GamepadViewModel(application: Application) : AndroidViewModel(application)
     fun onBluetoothEnableResult(resultCode: Int) {
         if (resultCode == android.app.Activity.RESULT_OK) {
             // Bluetooth enabled, show custom discoverability screen
+            // DO NOT bind service yet - wait for discoverability grant
             _initializationState.value = InitializationState.ShowingDiscoverabilityScreen
-            permissionCallback?.bindGamepadService()
         } else {
             // User denied Bluetooth enable
             _initializationState.value = InitializationState.Error("Bluetooth must be enabled to continue.")
@@ -727,7 +732,7 @@ class GamepadViewModel(application: Application) : AndroidViewModel(application)
             _connectionAlertsEnabled.value = true
             prefs.edit().putBoolean("pref_connection_alerts", true).apply()
             // Recreate notification channel if service is running
-            _gamepadService.value?.btService?.recreateNotificationChannel()
+            _gamepadService.value?.hidManager?.recreateNotificationChannel()
         } else {
             _connectionAlertsEnabled.value = false
             prefs.edit().putBoolean("pref_connection_alerts", false).apply()
@@ -742,14 +747,14 @@ class GamepadViewModel(application: Application) : AndroidViewModel(application)
             if (granted) {
                 _connectionAlertsEnabled.value = true
                 prefs.edit().putBoolean("pref_connection_alerts", true).apply()
-                _gamepadService.value?.btService?.recreateNotificationChannel()
+                _gamepadService.value?.hidManager?.recreateNotificationChannel()
             } else {
                 requestNotificationPermission()
             }
         } else {
             _connectionAlertsEnabled.value = false
             prefs.edit().putBoolean("pref_connection_alerts", false).apply()
-            _gamepadService.value?.btService?.removeNotificationChannel()
+            _gamepadService.value?.hidManager?.removeNotificationChannel()
         }
     }
 

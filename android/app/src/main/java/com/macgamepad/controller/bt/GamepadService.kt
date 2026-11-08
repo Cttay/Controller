@@ -25,6 +25,7 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import java.nio.ByteBuffer
 import java.util.concurrent.Executors
 
@@ -39,11 +40,6 @@ class GamepadService : Service(), SensorEventListener {
         private const val NOTIFICATION_ID = 901
         private const val CHANNEL_ID = "macgamepad_service_channel"
         private const val REPORT_INTERVAL_MS = 8L // 125Hz
-
-        enum class Mode {
-            GAMEPAD,
-            KEYBOARD
-        }
     }
 
     private val binder = LocalBinder()
@@ -62,9 +58,9 @@ class GamepadService : Service(), SensorEventListener {
     @Volatile private var gyroAccumX = 0f
     @Volatile private var gyroAccumY = 0f
 
-    // BT Gamepad Service helper
-    lateinit var btService: BluetoothGamepadService
-    
+    // HID Device Manager (injected by MainActivity before startSession)
+    lateinit var hidManager: HidDeviceManager
+
     // btService readiness signal (set after initialize() in startSession)
     private val _btServiceReady = MutableStateFlow(false)
     val btServiceReady: StateFlow<Boolean> = _btServiceReady.asStateFlow()
@@ -89,7 +85,6 @@ class GamepadService : Service(), SensorEventListener {
         super.onCreate()
         Log.i(TAG, "Creating GamepadService...")
         createNotificationChannel()
-        btService = BluetoothGamepadService(applicationContext)
 
         // Initialize Gyroscope sensor APIs
         sensorManager = getSystemService(Context.SENSOR_SERVICE) as? SensorManager
@@ -135,10 +130,14 @@ class GamepadService : Service(), SensorEventListener {
      * Start the Bluetooth HID connection session.
      */
     fun startSession() {
-        btService.setMode(_mode.value)
-        btService.initialize()
-        _btServiceReady.value = true  // Signal btService is ready for state collection
-        startTransmissionLoop()
+        hidManager.setMode(_mode.value)
+        hidManager.initialize()
+        // Wait for registrationComplete signal before starting transmission loop
+        serviceScope.launch {
+            hidManager.registrationComplete.first { it }  // Suspend until HID app registered
+            _btServiceReady.value = true  // Signal hidManager is ready for state collection
+            startTransmissionLoop()
+        }
     }
 
     /**
@@ -146,11 +145,11 @@ class GamepadService : Service(), SensorEventListener {
      */
     fun stopSession() {
         stopTransmissionLoop()
-        btService.shutdown()
+        hidManager.shutdown()
     }
 
     /**
-     * Set the emulation mode (Gamepad or Keyboard).
+     * Set the emulation mode (Gamepad, Keyboard, or Mouse).
      * Since we always register the unified descriptor (keyboard + mouse + gamepad),
      * mode switching only needs to restart the transmission loop — no BT re-registration.
      */
@@ -159,7 +158,7 @@ class GamepadService : Service(), SensorEventListener {
         Log.i(TAG, "Switching mode to: $newMode")
         stopTransmissionLoop()
         _mode.value = newMode
-        btService.setMode(newMode)
+        hidManager.setMode(newMode)
         startTransmissionLoop()
     }
 
@@ -218,7 +217,7 @@ class GamepadService : Service(), SensorEventListener {
      */
     fun updateInputState(state: InputState) {
         currentInputState = state
-        if (_mode.value == Companion.Mode.GAMEPAD && btService.connectionState.value == BluetoothGamepadService.ConnectionState.CONNECTED) {
+        if (_mode.value == Mode.GAMEPAD && hidManager.connectionState.value == ConnectionState.CONNECTED) {
             var finalState = state
             if (gyroEnabled) {
                 val rsX = (state.rightStickX + (gyroAccumX / 60f)).coerceIn(-1f, 1f)
@@ -227,7 +226,7 @@ class GamepadService : Service(), SensorEventListener {
                 gyroAccumY = 0f
                 finalState = state.copy(rightStickX = rsX, rightStickY = rsY)
             }
-            btService.sendReport(finalState)
+            hidManager.sendGamepadReport(finalState)
         }
     }
 
@@ -298,7 +297,7 @@ class GamepadService : Service(), SensorEventListener {
             var mouseWasMoving = false
 
             while (isActive) {
-                if (btService.connectionState.value == BluetoothGamepadService.ConnectionState.CONNECTED) {
+                if (hidManager.connectionState.value == ConnectionState.CONNECTED) {
                     val state = currentInputState
                     val last = lastSentState
 
@@ -307,13 +306,13 @@ class GamepadService : Service(), SensorEventListener {
                             // Active inputs are sent instantly in updateInputState() for zero latency.
                             // We only send a heartbeat report here every 25 iterations (~200ms) to maintain the Bluetooth link.
                             if (heartbeatCount >= 25) {
-                                btService.sendReport(state)
+                                hidManager.sendGamepadReport(state)
                                 heartbeatCount = 0
                             } else {
                                 heartbeatCount++
                             }
                         }
-                        Mode.KEYBOARD -> {
+                        Mode.KEYBOARD, Mode.MOUSE -> {
                             val keys = getKeyboardKeys(state)
                             val keysChanged = keys != lastSentKeys || keys.size != lastSentKeys.size || keys.zip(lastSentKeys).any { it.first != it.second }
 
@@ -381,7 +380,7 @@ class GamepadService : Service(), SensorEventListener {
             }
         }
 
-        btService.sendRawReport(KeyboardHidDescriptor.KEYBOARD_REPORT_ID.toInt(), buffer.array())
+        hidManager.sendReport(KeyboardHidDescriptor.KEYBOARD_REPORT_ID.toInt(), buffer.array())
     }
 
     @SuppressLint("MissingPermission")
@@ -399,7 +398,7 @@ class GamepadService : Service(), SensorEventListener {
         // Byte 3: Wheel
         buffer.put(0x00.toByte())
 
-        btService.sendRawReport(KeyboardHidDescriptor.MOUSE_REPORT_ID.toInt(), buffer.array())
+        hidManager.sendReport(KeyboardHidDescriptor.MOUSE_REPORT_ID.toInt(), buffer.array())
     }
 
     @SuppressLint("MissingPermission")
@@ -472,7 +471,7 @@ class GamepadService : Service(), SensorEventListener {
     override fun onDestroy() {
         super.onDestroy()
         stopTransmissionLoop()
-        btService.shutdown()
+        hidManager.shutdown()
         serviceScope.cancel()
     }
 }

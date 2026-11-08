@@ -32,8 +32,9 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.util.lerp
-import com.macgamepad.controller.bt.BluetoothGamepadService
+import com.macgamepad.controller.bt.ConnectionState
 import com.macgamepad.controller.bt.GamepadService
+import com.macgamepad.controller.bt.Mode
 import com.macgamepad.controller.ui.theme.*
 import kotlin.math.absoluteValue
 
@@ -219,10 +220,10 @@ private fun DrawScope.drawControllerArt(profile: ControllerProfile) {
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun DashboardScreen(
-    connectionState: BluetoothGamepadService.ConnectionState,
+    connectionState: ConnectionState,
     connectedDeviceName: String?,
-    mode: GamepadService.Companion.Mode,
-    onModeChange: (GamepadService.Companion.Mode) -> Unit,
+    mode: Mode,
+    onModeChange: (Mode) -> Unit,
     activeProfileId: String,
     onProfileChange: (String) -> Unit,
     sensitivity: Float,
@@ -238,7 +239,7 @@ fun DashboardScreen(
     onNavigateToSettings: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
-    val isConnected = connectionState == BluetoothGamepadService.ConnectionState.CONNECTED
+    val isConnected = connectionState == ConnectionState.CONNECTED
 
     val pagerState = rememberPagerState(
         initialPage = controllerProfiles.indexOfFirst { it.id == activeProfileId }.coerceAtLeast(0),
@@ -481,8 +482,8 @@ fun DashboardScreen(
                     horizontalArrangement = Arrangement.spacedBy(2.dp)
                 ) {
                     listOf(
-                        GamepadService.Companion.Mode.GAMEPAD to "Gamepad",
-                        GamepadService.Companion.Mode.KEYBOARD to "Keyboard"
+                        Mode.GAMEPAD to "Gamepad",
+                        Mode.KEYBOARD to "Keyboard"
                     ).forEach { (m, label) ->
                         val selected = mode == m
                         Text(
@@ -502,7 +503,7 @@ fun DashboardScreen(
 
             // Mode hint (only shown in Gamepad mode — BUG FIX: was always visible)
             AnimatedVisibility(
-                visible = (mode == GamepadService.Companion.Mode.GAMEPAD),
+                visible = (mode == Mode.GAMEPAD),
                 enter = fadeIn() + expandVertically(expandFrom = Alignment.Top),
                 exit = fadeOut() + shrinkVertically(shrinkTowards = Alignment.Top)
             ) {

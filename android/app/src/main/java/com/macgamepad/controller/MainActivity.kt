@@ -31,8 +31,11 @@ import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.macgamepad.controller.bt.BluetoothGamepadService
+import com.macgamepad.controller.bt.ConnectionState
 import com.macgamepad.controller.bt.GamepadService
+import com.macgamepad.controller.bt.HidDeviceManager
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.combine
 import com.macgamepad.controller.ui.screens.ConnectionScreen
 import com.macgamepad.controller.ui.screens.DashboardScreen
 import com.macgamepad.controller.ui.screens.GamepadScreen
@@ -74,6 +77,10 @@ class MainActivity : ComponentActivity(), GamepadViewModel.PermissionCallback {
             gamepadService = srv
             isBound = true
             
+            // Inject HidDeviceManager (BluetoothGamepadService) into GamepadService
+            val hidManager = BluetoothGamepadService(this@MainActivity)
+            srv.hidManager = hidManager
+            
             viewModelRef?.let { vm ->
                 vm.setService(srv)
                 startStateCollection(srv, vm)
@@ -107,7 +114,7 @@ class MainActivity : ComponentActivity(), GamepadViewModel.PermissionCallback {
                             // The GamepadScreen will handle this by observing connectionState
                             // but we can also force a navigation if needed
                             vm.updateServiceStates(
-                                BluetoothGamepadService.ConnectionState.ERROR,
+                                ConnectionState.ERROR,
                                 null,
                                 "Bluetooth was turned off"
                             )
@@ -123,24 +130,13 @@ class MainActivity : ComponentActivity(), GamepadViewModel.PermissionCallback {
 
     private fun startStateCollection(srv: GamepadService, vm: GamepadViewModel) {
         stopStateCollection()
-        // Wait for btServiceReady signal (set after btService.initialize() in startSession)
+        // Wait for btServiceReady signal (set after hidManager registrationComplete)
         serviceCollectorJob = lifecycleScope.launch {
-            srv.btServiceReady.first { it }  // Suspend until btService is initialized
-            launch {
-                srv.btService.connectionState.collectLatest { state ->
-                    vm.updateServiceStates(state, srv.btService.connectedDeviceName.value, srv.btService.errorMessage.value)
-                }
-            }
-            launch {
-                srv.btService.connectedDeviceName.collectLatest { name ->
-                    vm.updateServiceStates(srv.btService.connectionState.value, name, srv.btService.errorMessage.value)
-                }
-            }
-            launch {
-                srv.btService.errorMessage.collectLatest { err ->
-                    vm.updateServiceStates(srv.btService.connectionState.value, srv.btService.connectedDeviceName.value, err)
-                }
-            }
+            srv.btServiceReady.first { it }  // Suspend until hidManager is initialized
+            // Single collection with combine to avoid race conditions
+            combine(srv.hidManager.connectionState, srv.hidManager.connectedDeviceName, srv.hidManager.errorMessage) { state, name, err ->
+                vm.updateServiceStates(state, name, err)
+            }.collectLatest { }
         }
     }
 
@@ -169,11 +165,6 @@ class MainActivity : ComponentActivity(), GamepadViewModel.PermissionCallback {
                 val vm: GamepadViewModel = viewModel()
                 viewModelRef = vm
                 vm.setPermissionCallback(this)
-
-                // Sync service if bound late
-                LaunchedEffect(gamepadService) {
-                    gamepadService?.let { vm.setService(it) }
-                }
 
                 val currentScreen by vm.currentScreen.collectAsState()
                 val connectionState by vm.connectionState.collectAsState()

@@ -29,12 +29,12 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.macgamepad.controller.GamepadViewModel
-import com.macgamepad.controller.bt.BluetoothGamepadService
+import com.macgamepad.controller.bt.ConnectionState
 import com.macgamepad.controller.ui.theme.*
 
 @Composable
 fun ConnectionScreen(
-    connectionState: BluetoothGamepadService.ConnectionState,
+    connectionState: ConnectionState,
     connectedDeviceName: String?,
     errorMessage: String?,
     pairedDevices: List<BluetoothDevice>,
@@ -72,7 +72,7 @@ private fun ConnectionScreenContent(
     innerPadding: androidx.compose.foundation.layout.PaddingValues,
     permissionState: GamepadViewModel.PermissionStatus,
     initializationState: GamepadViewModel.InitializationState,
-    connectionState: BluetoothGamepadService.ConnectionState,
+    connectionState: ConnectionState,
     connectedDeviceName: String?,
     errorMessage: String?,
     pairedDevices: List<BluetoothDevice>,
@@ -481,7 +481,7 @@ private fun PermissionIntroScreen(onInitialize: () -> Unit) {
 
 @Composable
 private fun ConnectionStateContent(
-    connectionState: BluetoothGamepadService.ConnectionState,
+    connectionState: ConnectionState,
     connectedDeviceName: String?,
     errorMessage: String?,
     pairedDevices: List<BluetoothDevice>,
@@ -501,29 +501,30 @@ private fun ConnectionStateContent(
         }
 
         when (connectionState) {
-            BluetoothGamepadService.ConnectionState.DISCONNECTED -> {
+            ConnectionState.DISCONNECTED -> {
                 DisconnectedState(
                     onRequestDiscoverable = { vm.requestDiscoverability() },
                     pairedDevices = pairedDevices
                 )
             }
-            BluetoothGamepadService.ConnectionState.ERROR -> {
+            ConnectionState.ERROR -> {
                 DisconnectedState(
                     onRequestDiscoverable = { vm.requestDiscoverability() },
                     pairedDevices = pairedDevices
                 )
             }
-            BluetoothGamepadService.ConnectionState.REGISTERING,
-            BluetoothGamepadService.ConnectionState.CONNECTING -> {
+            ConnectionState.REGISTERING,
+            ConnectionState.CONNECTING -> {
                 ConnectingState()
             }
-            BluetoothGamepadService.ConnectionState.REGISTERED_WAITING -> {
+            ConnectionState.REGISTERED_WAITING -> {
                 DiscoverableState(
                     pairedDevices = pairedDevices,
-                    onDeviceClick = onDeviceConnectClick
+                    onDeviceClick = onDeviceConnectClick,
+                    onRequestDiscoverable = { vm.requestDiscoverability() }
                 )
             }
-            BluetoothGamepadService.ConnectionState.CONNECTED -> {
+            ConnectionState.CONNECTED -> {
                 ConnectedState(
                     deviceName = connectedDeviceName,
                     onStart = onStartGamepad,
@@ -658,7 +659,8 @@ private fun ConnectingState() {
 @Composable
 private fun DiscoverableState(
     pairedDevices: List<BluetoothDevice>,
-    onDeviceClick: (BluetoothDevice) -> Unit
+    onDeviceClick: (BluetoothDevice) -> Unit,
+    onRequestDiscoverable: () -> Unit
 ) {
     Column(
         verticalArrangement = Arrangement.spacedBy(16.dp),
@@ -687,6 +689,25 @@ private fun DiscoverableState(
                 PairingStepRow("1", "Open Bluetooth settings on your Mac")
                 PairingStepRow("2", "Remove any old phone connection")
                 PairingStepRow("3", "Find your phone name and click Connect")
+            }
+        }
+
+        // Re-discoverability button (appears after 300s timeout expires)
+        Button(
+            onClick = onRequestDiscoverable,
+            modifier = Modifier.fillMaxWidth().height(52.dp),
+            shape = RoundedCornerShape(14.dp),
+            colors = ButtonDefaults.buttonColors(
+                containerColor = MaterialTheme.colorScheme.tertiary,
+                contentColor = MaterialTheme.colorScheme.onTertiary
+            )
+        ) {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(Icons.Default.BluetoothSearching, null, tint = MaterialTheme.colorScheme.onTertiary, modifier = Modifier.size(20.dp))
+                Text("Make Discoverable Again", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = MaterialTheme.colorScheme.onTertiary)
             }
         }
 

@@ -26,14 +26,14 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.macgamepad.controller.bt.BluetoothGamepadService
+import com.macgamepad.controller.bt.ConnectionState
 import com.macgamepad.controller.ui.theme.*
 
 @Composable
 fun ProfileScreen(
     activeProfileId: String,
     onProfileChange: (String) -> Unit,
-    connectionState: BluetoothGamepadService.ConnectionState,
+    connectionState: ConnectionState,
     connectedDeviceName: String?,
     onResetProfileLayout: () -> Unit,
     onBack: () -> Unit,
@@ -92,7 +92,7 @@ fun ProfileScreen(
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             // ── Connection status ─────────────────────────────────────────
-            val isConnected = connectionState == BluetoothGamepadService.ConnectionState.CONNECTED
+            val isConnected = connectionState == ConnectionState.CONNECTED
             Row(
                 modifier = Modifier
                     .fillMaxWidth()

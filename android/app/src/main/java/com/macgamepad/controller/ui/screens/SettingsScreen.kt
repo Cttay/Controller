@@ -26,7 +26,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.macgamepad.controller.GamepadViewModel
 import com.macgamepad.controller.bt.GamepadService
-import com.macgamepad.controller.bt.BluetoothGamepadService
+import com.macgamepad.controller.bt.Mode
 import com.macgamepad.controller.ui.theme.*
 import androidx.activity.compose.BackHandler
 
@@ -48,8 +48,8 @@ fun SettingsScreen(
     // Connection
     autoReconnect: Boolean,
     onAutoReconnectChange: (Boolean) -> Unit,
-    mode: GamepadService.Companion.Mode,
-    onModeChange: (GamepadService.Companion.Mode) -> Unit,
+    mode: Mode,
+    onModeChange: (Mode) -> Unit,
     // Storage
     estimatedStorageBytes: Int,
     onClearAllLayouts: () -> Unit,
@@ -153,8 +153,8 @@ fun SettingsScreen(
                         horizontalArrangement = Arrangement.spacedBy(2.dp)
                     ) {
                         listOf(
-                            GamepadService.Companion.Mode.GAMEPAD to "Gamepad",
-                            GamepadService.Companion.Mode.KEYBOARD to "Keyboard"
+                            Mode.GAMEPAD to "Gamepad",
+                            Mode.KEYBOARD to "Keyboard"
                         ).forEach { (m, label) ->
                             val selected = mode == m
                             Text(

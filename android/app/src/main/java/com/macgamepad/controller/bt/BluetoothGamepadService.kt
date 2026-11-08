@@ -25,7 +25,7 @@ import java.util.concurrent.Executors
  *
  * Uses Android's [BluetoothHidDevice] API (available since API 28).
  */
-class BluetoothGamepadService(private val context: Context) {
+class BluetoothGamepadService(private val context: Context) : HidDeviceManager {
 
     companion object {
         private const val TAG = "BTGamepad"
@@ -45,23 +45,19 @@ class BluetoothGamepadService(private val context: Context) {
     // ================================================================
     // Connection state
     // ================================================================
-    enum class ConnectionState {
-        DISCONNECTED,
-        REGISTERING,
-        REGISTERED_WAITING,   // Registered, waiting for host to connect
-        CONNECTING,
-        CONNECTED,
-        ERROR
-    }
-
+    // ConnectionState enum moved to bt/ConnectionState.kt
     private val _connectionState = MutableStateFlow(ConnectionState.DISCONNECTED)
-    val connectionState: StateFlow<ConnectionState> = _connectionState.asStateFlow()
+    override val connectionState: StateFlow<ConnectionState> = _connectionState.asStateFlow()
 
     private val _errorMessage = MutableStateFlow<String?>(null)
-    val errorMessage: StateFlow<String?> = _errorMessage.asStateFlow()
+    override val errorMessage: StateFlow<String?> = _errorMessage.asStateFlow()
 
     private val _connectedDeviceName = MutableStateFlow<String?>(null)
-    val connectedDeviceName: StateFlow<String?> = _connectedDeviceName.asStateFlow()
+    override val connectedDeviceName: StateFlow<String?> = _connectedDeviceName.asStateFlow()
+
+    // Emits true once HID app registration is complete and ready for connections
+    private val _registrationComplete = MutableStateFlow(false)
+    override val registrationComplete: StateFlow<Boolean> = _registrationComplete.asStateFlow()
 
     // ================================================================
     // Bluetooth objects
@@ -83,9 +79,11 @@ class BluetoothGamepadService(private val context: Context) {
             Log.d(TAG, "App status changed: registered=$registered, device=${pluggedDevice?.name}")
             if (registered) {
                 _connectionState.value = ConnectionState.REGISTERED_WAITING
+                _registrationComplete.value = true  // Signal registration complete
                 Log.i(TAG, "✅ HID Device app registered. Waiting for host connection...")
             } else {
                 _connectionState.value = ConnectionState.DISCONNECTED
+                _registrationComplete.value = false  // Reset on unregister
                 Log.w(TAG, "⚠️ HID Device app unregistered")
             }
         }
@@ -164,7 +162,7 @@ class BluetoothGamepadService(private val context: Context) {
      * Call this once from your Activity/ViewModel after permissions are granted.
      */
     @SuppressLint("MissingPermission")
-    fun initialize() {
+    override fun initialize() {
         val bluetoothManager = context.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
         bluetoothAdapter = bluetoothManager?.adapter
 
@@ -203,7 +201,7 @@ class BluetoothGamepadService(private val context: Context) {
      * Get a list of currently bonded (paired) devices that we can try to connect to.
      */
     @SuppressLint("MissingPermission")
-    fun getBondedDevices(): List<BluetoothDevice> {
+    override fun getBondedDevices(): List<BluetoothDevice> {
         return bluetoothAdapter?.bondedDevices?.toList() ?: emptyList()
     }
 
@@ -212,7 +210,7 @@ class BluetoothGamepadService(private val context: Context) {
      * Useful when the Mac has already been paired previously.
      */
     @SuppressLint("MissingPermission")
-    fun connectToDevice(device: BluetoothDevice): Boolean {
+    override fun connectToDevice(device: BluetoothDevice): Boolean {
         val hid = hidDevice ?: return false
         Log.i(TAG, "Attempting to connect to: ${device.name ?: device.address}")
         return hid.connect(device)
@@ -220,47 +218,52 @@ class BluetoothGamepadService(private val context: Context) {
 
     // Active mode configuration
     @Volatile
-    private var activeMode = GamepadService.Companion.Mode.GAMEPAD
+    private var activeMode: Mode = Mode.GAMEPAD
 
     /**
      * Set the mode of operation before calling initialize().
      */
-    fun setMode(mode: GamepadService.Companion.Mode) {
+    override fun setMode(mode: Mode) {
         activeMode = mode
     }
 
     /**
-     * Send a raw HID report with a specific report ID.
+     * Send a raw HID report with a specific report ID (KEYBOARD/MOUSE modes).
+     * Transmits [data] with the specified [reportId] via BluetoothHidDevice.
+     *
+     * @param reportId The HID report ID (e.g., 1 for keyboard, 2 for mouse)
+     * @param data The report payload
+     * @return true if the report was sent successfully, false if not connected
      */
     @SuppressLint("MissingPermission")
-    fun sendRawReport(reportId: Int, reportData: ByteArray): Boolean {
+    override fun sendReport(reportId: Int, data: ByteArray): Boolean {
         val device = hostDevice ?: return false
         val hid = hidDevice ?: return false
-        return hid.sendReport(device, reportId, reportData)
+        return hid.sendReport(device, reportId, data)
     }
 
     /**
-     * Send the current input state as an HID report to the connected host (Gamepad mode).
+     * Send the current input state as an HID report to the connected host (GAMEPAD mode).
      * This should be called at 125Hz (every 8ms) from a high-priority thread.
      *
      * @param state The current controller input state
-     * @return true if the report was sent successfully
+     * @return true if the report was sent successfully, false if not connected
      */
     @SuppressLint("MissingPermission")
-    fun sendReport(state: InputState): Boolean {
+    override fun sendGamepadReport(state: InputState): Boolean {
         val device = hostDevice ?: return false
         val hid = hidDevice ?: return false
 
         val reportData = reportPacker.pack(state)
-        // Use Report ID 1 — the gamepad collection in the unified descriptor
-        return hid.sendReport(device, KeyboardHidDescriptor.GAMEPAD_REPORT_ID.toInt(), reportData)
+        // Use Report ID 1 — the gamepad collection in the gamepad-only descriptor
+        return hid.sendReport(device, GamepadHidDescriptor.GAMEPAD_REPORT_ID.toInt(), reportData)
     }
 
     /**
      * Disconnect from the host and unregister the HID app.
      */
     @SuppressLint("MissingPermission")
-    fun shutdown() {
+    override fun shutdown() {
         try {
             hostDevice?.let { device ->
                 hidDevice?.disconnect(device)
@@ -286,7 +289,7 @@ class BluetoothGamepadService(private val context: Context) {
     @Volatile
     private var targetDeviceName = "MacGamepad"
 
-    fun setTargetDeviceName(name: String) {
+    override fun setTargetDeviceName(name: String) {
         targetDeviceName = name
     }
 
@@ -303,7 +306,7 @@ class BluetoothGamepadService(private val context: Context) {
         }
 
         val subclass: Byte = BluetoothHidDevice.SUBCLASS2_GAMEPAD
-        val descriptor = KeyboardHidDescriptor.descriptor
+        val descriptor = GamepadHidDescriptor.descriptor
 
         val sdpSettings = BluetoothHidDeviceAppSdpSettings(
             targetDeviceName,
@@ -331,7 +334,7 @@ class BluetoothGamepadService(private val context: Context) {
     }
 
     // Notification channel methods for connection alerts
-    fun recreateNotificationChannel() {
+    override fun recreateNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
                 CHANNEL_ID,
@@ -345,7 +348,7 @@ class BluetoothGamepadService(private val context: Context) {
         }
     }
 
-    fun removeNotificationChannel() {
+    override fun removeNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
             manager.deleteNotificationChannel(CHANNEL_ID)

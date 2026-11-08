@@ -1,5 +1,13 @@
 # Agent Notes: MacGamepad Project
 
+## Recent Work Completed (2026-11-06)
+- **HID Report Fix**: BufferOverflowException resolved — 16 buttons packed into single short (14-byte report)
+- **Edge-to-Edge + Material3**: Scaffold layout, semantic colors, paired devices in ConnectionScreen
+- **Foreground Service + BT Broadcast Receiver**: Background execution support, mid-game BT-off detection
+- **VirtualTrigger Component**: Live depth visualization for L2/R2 analog triggers with haptic feedback
+- **InputThrottler**: Bitmask-based input throttling for efficient transmission
+- **Automated Fresh Install Test**: `scripts/fresh-install-test.sh` — build, install, launch, permission flow, log monitoring
+
 ## Build & Install
 
 Android app (Gradle 8.11.1, AGP 8.7.3, Kotlin 2.1.0, compileSdk 35, minSdk 28):
@@ -31,19 +39,31 @@ Manual APK install: `$ADB install -r android/app/build/outputs/apk/debug/app-deb
 
 ```bash
 # Run the automated test script (handles build, install, launch, permission taps, log monitoring)
-./.slim/scripts/fresh-install-test.sh
+./scripts/fresh-install-test.sh
 # Or with custom device serial:
-./.slim/scripts/fresh-install-test.sh 192.168.68.61:5555
+./scripts/fresh-install-test.sh 192.168.68.61:5555
+
+# Wait for full Mac connection verification (adds --wait-for-connect flag)
+./scripts/fresh-install-test.sh --wait-for-connect
+./scripts/fresh-install-test.sh 344c73ad --wait-for-connect
 ```
 
 The script will:
 1. Clean build + install
 2. Launch app
-3. Auto-tap "Initialize Controller" and "Allow" permission dialog
+3. Auto-tap "Initialize Controller" and "Allow" permission dialogs (Bluetooth + discoverability)
 4. Monitor logs for HID registration success
-5. Exit when app shows "Discoverable — waiting for Mac"
+5. Exit when app shows "Discoverable — waiting for Mac" (or "Connected to host" with `--wait-for-connect`)
 
-See `docs/FRESH_INSTALL_TESTING.md` for full manual flow and troubleshooting.
+Defaults to first connected device if no serial specified. See `docs/FRESH_INSTALL_TESTING.md` for full manual flow and troubleshooting.
+
+### Bluetooth HID Debugging Playbook
+
+For Bluetooth pairing issues, see `docs/BT_DEBUGGING.md` — covers:
+- Complete HID registration flow with log markers
+- Common failure modes (early visibility, pairing failure, auto-disconnect, UI stuck)
+- Debugging checklist and commands
+- Architecture notes on HidDeviceManager interface
 
 Tests and lint (unit tests live in `android/app/src/test/`; there are no instrumented tests):
 
@@ -255,3 +275,11 @@ interface HidDeviceManager {
 - **Do** consider extracting interfaces before adding new features to `GamepadService` or `BluetoothGamepadService`
 - The `openspec/changes/security-performance-hardening/` directory contains the current approved change with full specs, design, and tasks
 - **`tasks.md` checkboxes are unreliable**: several tasks (4.1-4.2, 6.1-6.5, 8.1-8.4) are marked `[x]` but the corresponding code does not exist. Verify against source before trusting completion state.
+
+---
+
+## Universal Development Rules
+
+- **Language Version Gates APIs**: Always verify `kotlinOptions.jvmTarget`, `compileSdk`, `minSdk`, `languageVersion` before using new APIs. Use `@RequiresApi` or version guards.
+- **One Spec = One Incremental Change**: Each OpenSpec change should implement ONE architectural improvement (not all P0-P6 at once). Tasks within a change should be independently verifiable.
+- **Verify Against Source**: Never trust `tasks.md` checkboxes — grep the actual code.
